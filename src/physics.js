@@ -4,7 +4,7 @@ const MAX_BODIES = 200;
 
 const LINE_TYPES = {
   '#333333': { label: 'ground', restitution: 0.3, friction: 0.6 },
-  '#f5c542': { label: 'bounce', restitution: 1.8, friction: 0.1 },
+  '#f5c542': { label: 'bounce', restitution: 3.0, friction: 0.05 },
   '#e74c3c': { label: 'kill', restitution: 0.3, friction: 0.6 },
 };
 
@@ -59,6 +59,7 @@ export class PhysicsWorld {
 
   _setupKillDetection() {
     this._killQueue = [];
+    this._explosions = [];
 
     Matter.Events.on(this._engine, 'collisionStart', (event) => {
       for (const pair of event.pairs) {
@@ -78,10 +79,45 @@ export class PhysicsWorld {
         const body = this._killQueue.pop();
         const idx = this._bodies.indexOf(body);
         if (idx !== -1) {
+          this._spawnExplosion(body.position.x, body.position.y);
           this._destroyBody(idx);
         }
       }
     });
+  }
+
+  _spawnExplosion(x, y) {
+    const count = 12;
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.5;
+      const speed = 2 + Math.random() * 4;
+      this._explosions.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 1.0,
+        size: 3 + Math.random() * 5,
+        color: Math.random() > 0.5 ? '#e74c3c' : '#f39c12',
+      });
+    }
+  }
+
+  updateExplosions() {
+    for (let i = this._explosions.length - 1; i >= 0; i--) {
+      const p = this._explosions[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.1;
+      p.life -= 0.025;
+      if (p.life <= 0) {
+        this._explosions.splice(i, 1);
+      }
+    }
+  }
+
+  get explosions() {
+    return this._explosions;
   }
 
   _destroyBody(index) {
@@ -107,7 +143,7 @@ export class PhysicsWorld {
     const ball = Matter.Bodies.circle(x, y, 15, {
       restitution: 0.6,
       friction: 0.3,
-      density: 0.002,
+      density: 0.006,
       render: { fillStyle: '#7b68ee' },
       label: 'ball',
     });

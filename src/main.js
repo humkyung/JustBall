@@ -89,6 +89,17 @@ function render() {
     ctx.stroke();
   }
 
+  // Update and draw explosions
+  world.updateExplosions();
+  for (const p of world.explosions) {
+    ctx.globalAlpha = p.life;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fillStyle = p.color;
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
   // Update status
   statusEl.textContent = `Bodies: ${world.bodyCount}`;
 
