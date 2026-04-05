@@ -1,0 +1,17 @@
+{
+  "name": "justball",
+  "version": "1.0.0",
+  "description": "2D sandbox physics puzzle game - draw lines, spawn balls, solve puzzles",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "matter-js": "^0.20.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}
