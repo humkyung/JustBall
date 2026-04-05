@@ -1,7 +1,5 @@
 import Matter from 'matter-js';
 
-const MAX_BODIES = 200;
-
 const LINE_TYPES = {
   '#333333': { label: 'ground', restitution: 0.3, friction: 0.6 },
   '#f5c542': { label: 'bounce', restitution: 3.0, friction: 0.05 },
@@ -26,17 +24,20 @@ export class PhysicsWorld {
     this.onImpact = null;
     this.onBoost = null;
 
+    this._debris = [];
+
     this._createBoundaries();
     this._setupOOBDetection();
     this._setupKillDetection();
     this._setupBounceBoost();
+    this._setupBottomRescue();
 
     Matter.Runner.run(this._runner, this._engine);
   }
 
   _createBoundaries() {
-    const w = this._canvas.width;
-    const h = this._canvas.height;
+    const w = this._canvas.cssWidth || this._canvas.width;
+    const h = this._canvas.cssHeight || this._canvas.height;
     const thickness = 50;
 
     const walls = [
@@ -51,7 +52,7 @@ export class PhysicsWorld {
 
   _setupOOBDetection() {
     Matter.Events.on(this._engine, 'afterUpdate', () => {
-      const limit = this._canvas.height + 100;
+      const limit = (this._canvas.cssHeight || this._canvas.height) + 100;
       for (let i = this._bodies.length - 1; i >= 0; i--) {
         const body = this._bodies[i];
         if (!body.isStatic && body.position.y > limit) {
@@ -84,6 +85,7 @@ export class PhysicsWorld {
         const idx = this._bodies.indexOf(body);
         if (idx !== -1) {
           this._spawnExplosion(body.position.x, body.position.y);
+          this._spawnDebris(body.position.x, body.position.y, '#7b68ee');
           if (this.onKill) this.onKill();
           this._destroyBody(idx);
         }
@@ -160,6 +162,68 @@ export class PhysicsWorld {
     }
   }
 
+  _spawnDebris(x, y, color) {
+    const count = 6 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 1.5 + Math.random() * 3;
+      this._debris.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 1,
+        life: 1.0,
+        size: 2 + Math.random() * 4,
+        color: color || '#aaaaaa',
+        rotation: Math.random() * Math.PI * 2,
+        rotSpeed: (Math.random() - 0.5) * 0.3,
+      });
+    }
+  }
+
+  updateDebris() {
+    for (let i = this._debris.length - 1; i >= 0; i--) {
+      const p = this._debris[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.15;
+      p.vx *= 0.97;
+      p.rotation += p.rotSpeed;
+      p.life -= 0.03;
+      if (p.life <= 0) {
+        this._debris.splice(i, 1);
+      }
+    }
+  }
+
+  get debris() {
+    return this._debris;
+  }
+
+  // Apply upward nudge to balls near the bottom to escape narrow traps
+  _setupBottomRescue() {
+    Matter.Events.on(this._engine, 'collisionStart', (event) => {
+      const h = this._canvas.cssHeight || this._canvas.height;
+      const threshold = h * 0.85;
+      for (const pair of event.pairs) {
+        const { bodyA, bodyB } = pair;
+        const candidates = [];
+        if (!bodyA.isStatic && bodyA._type === 'ball') candidates.push(bodyA);
+        if (!bodyB.isStatic && bodyB._type === 'ball') candidates.push(bodyB);
+        for (const ball of candidates) {
+          if (ball.position.y > threshold) {
+            // Add upward force proportional to depth below threshold
+            const depth = (ball.position.y - threshold) / (h - threshold);
+            Matter.Body.applyForce(ball, ball.position, {
+              x: (Math.random() - 0.5) * 0.002,
+              y: -0.015 - depth * 0.02,
+            });
+          }
+        }
+      }
+    });
+  }
+
   updateExplosions() {
     for (let i = this._explosions.length - 1; i >= 0; i--) {
       const p = this._explosions[i];
@@ -183,19 +247,7 @@ export class PhysicsWorld {
     this._bodies.splice(index, 1);
   }
 
-  _enforceCap() {
-    while (this._bodies.length >= MAX_BODIES) {
-      const dynIdx = this._bodies.findIndex((b) => !b.isStatic);
-      if (dynIdx !== -1) {
-        this._destroyBody(dynIdx);
-      } else {
-        this._destroyBody(0);
-      }
-    }
-  }
-
   addBall(x, y) {
-    this._enforceCap();
     const ball = Matter.Bodies.circle(x, y, 15, {
       restitution: 0.6,
       friction: 0.3,
@@ -216,7 +268,6 @@ export class PhysicsWorld {
     const createdBodies = [];
 
     for (let i = 0; i < points.length - 1; i++) {
-      this._enforceCap();
       const p1 = points[i];
       const p2 = points[i + 1];
       const cx = (p1.x + p2.x) / 2;
@@ -267,11 +318,23 @@ export class PhysicsWorld {
       const body = found[0];
       const idx = this._bodies.indexOf(body);
       if (idx !== -1) {
+        const color = body._color || (body._type === 'ball' ? '#7b68ee' : '#aaaaaa');
+        this._spawnDebris(body.position.x, body.position.y, color);
         this._destroyBody(idx);
         return true;
       }
     }
     return false;
+  }
+
+  findBodyAtPoint(x, y) {
+    const found = Matter.Query.point(this._bodies, { x, y });
+    return found.length > 0 ? found[0] : null;
+  }
+
+  moveBody(body, x, y) {
+    Matter.Body.setPosition(body, { x, y });
+    Matter.Body.setVelocity(body, { x: 0, y: 0 });
   }
 
   clearAll() {
@@ -281,6 +344,9 @@ export class PhysicsWorld {
   }
 
   resize(w, h) {
+    // Store CSS dimensions so boundary/OOB logic uses correct coordinates
+    this._canvas.cssWidth = w;
+    this._canvas.cssHeight = h;
     for (const wall of this._walls) {
       Matter.Composite.remove(this._world, wall);
     }

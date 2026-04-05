@@ -9,6 +9,9 @@ export class Toolbar {
     this._drawing = false;
     this._currentPath = [];
     this._drawingCtx = canvas.getContext('2d');
+    this._hoverPos = null;
+    this._dragging = null;
+    this._dragOffset = { x: 0, y: 0 };
 
     this._setupToolbar();
     this._setupCanvas();
@@ -55,6 +58,17 @@ export class Toolbar {
   _onPointerDown(e) {
     const pos = this._getCanvasPos(e);
 
+    // Ctrl+drag: move any body
+    if (e.ctrlKey) {
+      const body = this._world.findBodyAtPoint(pos.x, pos.y);
+      if (body) {
+        this._dragging = body;
+        this._dragOffset = { x: pos.x - body.position.x, y: pos.y - body.position.y };
+        this._canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+    }
+
     switch (this._tool) {
       case 'ball':
         this._world.addBall(pos.x, pos.y);
@@ -76,13 +90,24 @@ export class Toolbar {
   }
 
   _onPointerMove(e) {
-    if (!this._drawing || this._tool !== 'pencil') return;
-
     const pos = this._getCanvasPos(e);
+    this._hoverPos = pos;
+
+    // Ctrl+drag in progress
+    if (this._dragging) {
+      this._world.moveBody(this._dragging, pos.x - this._dragOffset.x, pos.y - this._dragOffset.y);
+      return;
+    }
+
+    if (!this._drawing || this._tool !== 'pencil') return;
     this._currentPath.push(pos);
   }
 
   _onPointerUp(_e) {
+    if (this._dragging) {
+      this._dragging = null;
+      return;
+    }
     if (!this._drawing) return;
     this._drawing = false;
 
@@ -122,5 +147,9 @@ export class Toolbar {
 
   get currentPath() {
     return this._currentPath;
+  }
+
+  get hoverPos() {
+    return this._hoverPos;
   }
 }

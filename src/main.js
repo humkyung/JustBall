@@ -7,15 +7,23 @@ const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
 
-// Resize canvas drawing buffer to match its CSS layout size
+// Resize canvas drawing buffer to match its CSS layout size, respecting devicePixelRatio
 function resizeCanvas() {
   const toolbar = document.getElementById('toolbar');
   const toolbarH = toolbar.getBoundingClientRect().height || toolbar.offsetHeight;
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight - toolbarH;
-  // Sync CSS size explicitly so getBoundingClientRect stays accurate
-  canvas.style.width = canvas.width + 'px';
-  canvas.style.height = canvas.height + 'px';
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = window.innerWidth;
+  const cssH = window.innerHeight - toolbarH;
+
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  canvas.style.width = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+
+  // Store CSS dimensions for physics (physics uses CSS pixel coordinates)
+  canvas.cssWidth = cssW;
+  canvas.cssHeight = cssH;
+  canvas.dpr = dpr;
 }
 
 resizeCanvas();
@@ -46,8 +54,16 @@ document.addEventListener('keydown', (e) => {
 
 window.addEventListener('resize', () => {
   resizeCanvas();
-  world.resize(canvas.width, canvas.height);
+  world.resize(canvas.cssWidth, canvas.cssHeight);
 });
+
+// Detect zoom changes (devicePixelRatio changes) via visualViewport
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => {
+    resizeCanvas();
+    world.resize(canvas.cssWidth, canvas.cssHeight);
+  });
+}
 
 const BALL_COLOR = '#7b68ee';
 const BALL_RADIUS = 15;
@@ -59,22 +75,44 @@ const COLOR_MAP = {
 };
 
 function render() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const dpr = canvas.dpr || 1;
+  const W = canvas.cssWidth || canvas.width;
+  const H = canvas.cssHeight || canvas.height;
+
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
 
   // Draw grid (subtle)
   ctx.strokeStyle = 'rgba(255,255,255,0.03)';
   ctx.lineWidth = 1;
-  for (let x = 0; x < canvas.width; x += 40) {
+  for (let x = 0; x < W; x += 40) {
     ctx.beginPath();
     ctx.moveTo(x, 0);
-    ctx.lineTo(x, canvas.height);
+    ctx.lineTo(x, H);
     ctx.stroke();
   }
-  for (let y = 0; y < canvas.height; y += 40) {
+  for (let y = 0; y < H; y += 40) {
     ctx.beginPath();
     ctx.moveTo(0, y);
-    ctx.lineTo(canvas.width, y);
+    ctx.lineTo(W, y);
     ctx.stroke();
+  }
+
+  // Determine hovered ball for selection ring
+  const hover = toolbar.hoverPos;
+  let hoveredBall = null;
+  if (hover) {
+    for (const body of world.bodies) {
+      if (body._type === 'ball') {
+        const dx = hover.x - body.position.x;
+        const dy = hover.y - body.position.y;
+        if (Math.hypot(dx, dy) < BALL_RADIUS + 10) {
+          hoveredBall = body;
+          break;
+        }
+      }
+    }
   }
 
   // Draw bodies
@@ -82,6 +120,16 @@ function render() {
     if (body.label === 'wall') continue;
 
     if (body._type === 'ball') {
+      // Selection ring for hovered ball
+      if (body === hoveredBall) {
+        ctx.beginPath();
+        ctx.arc(body.position.x, body.position.y, BALL_RADIUS + 6, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
       ctx.beginPath();
       ctx.arc(body.position.x, body.position.y, BALL_RADIUS, 0, Math.PI * 2);
       ctx.fillStyle = BALL_COLOR;
@@ -126,21 +174,35 @@ function render() {
     ctx.fillStyle = p.color;
     ctx.fill();
   }
+
+  // Update and draw debris particles
+  world.updateDebris();
+  for (const p of world.debris) {
+    ctx.globalAlpha = p.life * 0.9;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.rotation);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+    ctx.restore();
+  }
   ctx.globalAlpha = 1;
 
   // Pause overlay
   if (paused) {
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 48px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('⏸ PAUSED', canvas.width / 2, canvas.height / 2);
+    ctx.fillText('⏸ PAUSED', W / 2, H / 2);
     ctx.font = '18px "Segoe UI", sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.fillText('Press Space to resume', canvas.width / 2, canvas.height / 2 + 52);
+    ctx.fillText('Press Space to resume', W / 2, H / 2 + 52);
   }
+
+  ctx.restore();
 
   // Update status
   statusEl.textContent = `Bodies: ${world.bodyCount}${paused ? '  |  PAUSED (Space)' : ''}`;
