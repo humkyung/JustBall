@@ -20,9 +20,16 @@ export class PhysicsWorld {
 
     this._runner = Matter.Runner.create();
 
+    // Sound event callbacks (set from outside)
+    this.onBounce = null;
+    this.onKill = null;
+    this.onImpact = null;
+    this.onBoost = null;
+
     this._createBoundaries();
     this._setupOOBDetection();
     this._setupKillDetection();
+    this._setupBounceBoost();
 
     Matter.Runner.run(this._runner, this._engine);
   }
@@ -33,11 +40,8 @@ export class PhysicsWorld {
     const thickness = 50;
 
     const walls = [
-      // Left wall
       Matter.Bodies.rectangle(-thickness / 2, h / 2, thickness, h * 3, { isStatic: true, label: 'wall' }),
-      // Right wall
       Matter.Bodies.rectangle(w + thickness / 2, h / 2, thickness, h * 3, { isStatic: true, label: 'wall' }),
-      // Top wall
       Matter.Bodies.rectangle(w / 2, -thickness / 2, w * 3, thickness, { isStatic: true, label: 'wall' }),
     ];
 
@@ -80,8 +84,61 @@ export class PhysicsWorld {
         const idx = this._bodies.indexOf(body);
         if (idx !== -1) {
           this._spawnExplosion(body.position.x, body.position.y);
+          if (this.onKill) this.onKill();
           this._destroyBody(idx);
         }
+      }
+    });
+  }
+
+  // Trampoline bounce improvement: queue balls hitting bounce surfaces,
+  // then apply velocity override in afterUpdate for guaranteed strong bounce.
+  _setupBounceBoost() {
+    this._bounceQueue = [];
+
+    Matter.Events.on(this._engine, 'collisionStart', (event) => {
+      for (const pair of event.pairs) {
+        const { bodyA, bodyB } = pair;
+        let ball = null;
+        let bouncer = null;
+
+        if (bodyA.label === 'bounce' && !bodyB.isStatic) {
+          bouncer = bodyA; ball = bodyB;
+        } else if (bodyB.label === 'bounce' && !bodyA.isStatic) {
+          bouncer = bodyB; ball = bodyA;
+        }
+
+        if (ball && bouncer) {
+          this._bounceQueue.push({ ball, normal: pair.collision.normal, swapped: bodyB.label === 'bounce' });
+        }
+      }
+    });
+
+    Matter.Events.on(this._engine, 'afterUpdate', () => {
+      const processed = new Set();
+      while (this._bounceQueue.length > 0) {
+        const { ball, normal, swapped } = this._bounceQueue.pop();
+        if (processed.has(ball.id)) continue;
+        processed.add(ball.id);
+
+        // Collision normal points from bodyA to bodyB — flip if needed
+        let nx = swapped ? normal.x : -normal.x;
+        let ny = swapped ? normal.y : -normal.y;
+
+        const speed = Math.hypot(ball.velocity.x, ball.velocity.y);
+        // Ensure minimum launch speed of 16, otherwise multiply by 2.5
+        const launchSpeed = Math.max(speed * 2.5, 16);
+
+        // Reflect velocity along normal then scale up to launchSpeed
+        const dot = ball.velocity.x * nx + ball.velocity.y * ny;
+        let rvx = ball.velocity.x - 2 * dot * nx;
+        let rvy = ball.velocity.y - 2 * dot * ny;
+        const rSpeed = Math.hypot(rvx, rvy) || 1;
+        const scale = launchSpeed / rSpeed;
+
+        Matter.Body.setVelocity(ball, { x: rvx * scale, y: rvy * scale });
+
+        if (this.onBounce) this.onBounce(launchSpeed);
       }
     });
   }
@@ -128,7 +185,6 @@ export class PhysicsWorld {
 
   _enforceCap() {
     while (this._bodies.length >= MAX_BODIES) {
-      // Evict oldest dynamic body first, then oldest static
       const dynIdx = this._bodies.findIndex((b) => !b.isStatic);
       if (dynIdx !== -1) {
         this._destroyBody(dynIdx);
@@ -189,6 +245,22 @@ export class PhysicsWorld {
     return createdBodies;
   }
 
+  // Apply an upward impulse to the first ball found near (x, y)
+  applyBoost(x, y) {
+    const found = Matter.Query.point(this._bodies, { x, y });
+    for (const body of found) {
+      if (body._type === 'ball') {
+        Matter.Body.applyForce(body, body.position, {
+          x: (Math.random() - 0.5) * 0.04,
+          y: -0.07,
+        });
+        if (this.onBoost) this.onBoost();
+        return true;
+      }
+    }
+    return false;
+  }
+
   removeBodyAtPoint(x, y) {
     const found = Matter.Query.point(this._bodies, { x, y });
     if (found.length > 0) {
@@ -209,12 +281,9 @@ export class PhysicsWorld {
   }
 
   resize(w, h) {
-    // Remove old walls and recreate
     for (const wall of this._walls) {
       Matter.Composite.remove(this._world, wall);
     }
-    this._canvas.width = w;
-    this._canvas.height = h;
     this._createBoundaries();
   }
 
@@ -224,6 +293,10 @@ export class PhysicsWorld {
 
   get engine() {
     return this._engine;
+  }
+
+  get runner() {
+    return this._runner;
   }
 
   get bodyCount() {

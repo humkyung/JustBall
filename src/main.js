@@ -1,20 +1,48 @@
+import Matter from 'matter-js';
 import { PhysicsWorld } from './physics.js';
 import { Toolbar } from './toolbar.js';
+import { SoundSystem } from './sound.js';
 
 const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
 
+// Resize canvas drawing buffer to match its CSS layout size
 function resizeCanvas() {
   const toolbar = document.getElementById('toolbar');
+  const toolbarH = toolbar.getBoundingClientRect().height || toolbar.offsetHeight;
   canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight - toolbar.offsetHeight;
+  canvas.height = window.innerHeight - toolbarH;
+  // Sync CSS size explicitly so getBoundingClientRect stays accurate
+  canvas.style.width = canvas.width + 'px';
+  canvas.style.height = canvas.height + 'px';
 }
 
 resizeCanvas();
 
 const world = new PhysicsWorld(canvas);
 const toolbar = new Toolbar(world, canvas);
+const sound = new SoundSystem();
+
+// Wire up sound callbacks
+world.onBounce = (speed) => sound.playBounce(speed);
+world.onKill = () => sound.playExplosion();
+world.onBoost = () => sound.playBoost();
+
+// Spacebar pause / resume
+let paused = false;
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && e.target === document.body) {
+    e.preventDefault();
+    paused = !paused;
+    if (paused) {
+      Matter.Runner.stop(world.runner);
+    } else {
+      Matter.Runner.run(world.runner, world.engine);
+    }
+  }
+});
 
 window.addEventListener('resize', () => {
   resizeCanvas();
@@ -100,8 +128,22 @@ function render() {
   }
   ctx.globalAlpha = 1;
 
+  // Pause overlay
+  if (paused) {
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 48px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('⏸ PAUSED', canvas.width / 2, canvas.height / 2);
+    ctx.font = '18px "Segoe UI", sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillText('Press Space to resume', canvas.width / 2, canvas.height / 2 + 52);
+  }
+
   // Update status
-  statusEl.textContent = `Bodies: ${world.bodyCount}`;
+  statusEl.textContent = `Bodies: ${world.bodyCount}${paused ? '  |  PAUSED (Space)' : ''}`;
 
   requestAnimationFrame(render);
 }

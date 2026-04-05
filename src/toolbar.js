@@ -68,6 +68,10 @@ export class Toolbar {
       case 'eraser':
         this._world.removeBodyAtPoint(pos.x, pos.y);
         break;
+
+      case 'boost':
+        this._world.applyBoost(pos.x, pos.y);
+        break;
     }
   }
 
@@ -92,13 +96,14 @@ export class Toolbar {
   _updateCursor() {
     switch (this._tool) {
       case 'ball':
-        this._canvas.style.cursor = 'crosshair';
-        break;
       case 'pencil':
         this._canvas.style.cursor = 'crosshair';
         break;
       case 'eraser':
         this._canvas.style.cursor = 'pointer';
+        break;
+      case 'boost':
+        this._canvas.style.cursor = 'cell';
         break;
     }
   }
