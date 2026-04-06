@@ -41,6 +41,7 @@ world.onLineBreak = () => sound.playLineBreak();
 world.onBombExplode = () => sound.playBombExplode();
 world.onLaunch = (power) => sound.playLaunch(power);
 world.onImpact = (intensity) => sound.playImpact(intensity);
+world.onPlasmaChain = () => sound.playExplosion();
 
 // Trampoline squish animation state: Map<bodyId, {startTime, nx, ny, speed}>
 const trampolineHits = new Map();
@@ -153,6 +154,22 @@ function render() {
         ctx.fill();
       }
 
+      // Plasma: pulsing electric glow + inner lightning arcs
+      if (ballType === 'plasma') {
+        const now = Date.now();
+        const pulse = Math.sin(now / 80) * 0.5 + 0.5;
+        const glowRadius = BALL_RADIUS + 6 + pulse * 8;
+        const grd = ctx.createRadialGradient(bx, by, BALL_RADIUS * 0.3, bx, by, glowRadius);
+        grd.addColorStop(0, 'rgba(150, 200, 255, 0.8)');
+        grd.addColorStop(0.3, 'rgba(80, 100, 255, 0.5)');
+        grd.addColorStop(0.6, 'rgba(120, 50, 200, 0.3)');
+        grd.addColorStop(1, 'rgba(80, 0, 180, 0)');
+        ctx.beginPath();
+        ctx.arc(bx, by, glowRadius, 0, Math.PI * 2);
+        ctx.fillStyle = grd;
+        ctx.fill();
+      }
+
       // Ball body
       ctx.beginPath();
       ctx.arc(bx, by, BALL_RADIUS, 0, Math.PI * 2);
@@ -170,13 +187,20 @@ function render() {
         grd.addColorStop(0.4, '#ff6600');
         grd.addColorStop(1, '#cc1100');
         ctx.fillStyle = grd;
+      } else if (ballType === 'plasma') {
+        // Dark sphere core (like a plasma globe)
+        const grd = ctx.createRadialGradient(bx, by, 0, bx, by, BALL_RADIUS);
+        grd.addColorStop(0, '#1a0a2e');
+        grd.addColorStop(0.6, '#0d0520');
+        grd.addColorStop(1, '#140830');
+        ctx.fillStyle = grd;
       } else {
         ctx.fillStyle = ballColor;
       }
       ctx.fill();
 
       // Ball outline
-      ctx.strokeStyle = ballType === 'fireball' ? 'rgba(255,150,0,0.6)' : 'rgba(255,255,255,0.3)';
+      ctx.strokeStyle = ballType === 'fireball' ? 'rgba(255,150,0,0.6)' : ballType === 'plasma' ? 'rgba(0,220,255,0.6)' : 'rgba(255,255,255,0.3)';
       ctx.lineWidth = 1;
       ctx.stroke();
 
@@ -193,6 +217,77 @@ function render() {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('S', bx, by);
+      }
+
+      // Plasma: inner lightning discharge arcs
+      if (ballType === 'plasma') {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(bx, by, BALL_RADIUS - 1, 0, Math.PI * 2);
+        ctx.clip();
+        const now = Date.now();
+        ctx.globalCompositeOperation = 'lighter';
+        // Draw 3-4 lightning branches from center to edge
+        const branchCount = 3 + Math.floor((Math.sin(now / 700) + 1));
+        for (let b = 0; b < branchCount; b++) {
+          // Animate base angle over time, each branch offset
+          const baseAngle = (now / 800 + b * Math.PI * 2 / branchCount) + Math.sin(now / 300 + b) * 0.5;
+          const steps = 5;
+          ctx.beginPath();
+          ctx.moveTo(bx, by);
+          let px = bx, py = by;
+          for (let s = 1; s <= steps; s++) {
+            const t = s / steps;
+            const targetX = bx + Math.cos(baseAngle) * BALL_RADIUS * t;
+            const targetY = by + Math.sin(baseAngle) * BALL_RADIUS * t;
+            // Zigzag jitter perpendicular to direction
+            const jitter = (Math.random() - 0.5) * 8 * (1 - t * 0.3);
+            const nx = -Math.sin(baseAngle);
+            const ny = Math.cos(baseAngle);
+            px = targetX + nx * jitter;
+            py = targetY + ny * jitter;
+            ctx.lineTo(px, py);
+          }
+          // Color: blue core fading to purple at edges
+          const hue = 220 + Math.sin(now / 200 + b) * 40;
+          ctx.strokeStyle = `hsla(${hue}, 100%, 75%, ${0.7 + Math.random() * 0.3})`;
+          ctx.lineWidth = 1.5 + Math.random();
+          ctx.stroke();
+          // Bright core stroke
+          ctx.beginPath();
+          ctx.moveTo(bx, by);
+          let qx = bx, qy = by;
+          for (let s = 1; s <= steps; s++) {
+            const t = s / steps;
+            const targetX = bx + Math.cos(baseAngle) * BALL_RADIUS * t;
+            const targetY = by + Math.sin(baseAngle) * BALL_RADIUS * t;
+            const jitter = (Math.random() - 0.5) * 5 * (1 - t * 0.3);
+            const nx2 = -Math.sin(baseAngle);
+            const ny2 = Math.cos(baseAngle);
+            qx = targetX + nx2 * jitter;
+            qy = targetY + ny2 * jitter;
+            ctx.lineTo(qx, qy);
+          }
+          ctx.strokeStyle = `rgba(200, 220, 255, ${0.4 + Math.random() * 0.3})`;
+          ctx.lineWidth = 0.8;
+          ctx.stroke();
+        }
+        // Bright center point
+        const cGrd = ctx.createRadialGradient(bx, by, 0, bx, by, 4);
+        cGrd.addColorStop(0, 'rgba(220, 230, 255, 0.9)');
+        cGrd.addColorStop(1, 'rgba(100, 150, 255, 0)');
+        ctx.beginPath();
+        ctx.arc(bx, by, 4, 0, Math.PI * 2);
+        ctx.fillStyle = cGrd;
+        ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.restore();
+        // Edge rim glow
+        ctx.beginPath();
+        ctx.arc(bx, by, BALL_RADIUS, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(120, 80, 220, ${0.4 + Math.sin(now / 150) * 0.2})`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
       }
 
       // Bomb fuse indicator
@@ -636,6 +731,45 @@ function render() {
     ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
     ctx.fillStyle = grd;
     ctx.fill();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+
+  // Update and draw plasma electric arcs (additive blending)
+  world.updatePlasmaArcs();
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const arc of world.plasmaArcs) {
+    if (arc.spark) {
+      // Spark particles
+      const size = arc.size * arc.life;
+      const grd = ctx.createRadialGradient(arc.x, arc.y, 0, arc.x, arc.y, size);
+      grd.addColorStop(0, `rgba(200,255,255,${arc.life * 0.9})`);
+      grd.addColorStop(1, `rgba(0,150,255,0)`);
+      ctx.beginPath();
+      ctx.arc(arc.x, arc.y, size, 0, Math.PI * 2);
+      ctx.fillStyle = grd;
+      ctx.fill();
+    } else if (arc.points) {
+      // Electric arc zigzag line
+      ctx.beginPath();
+      ctx.moveTo(arc.points[0].x, arc.points[0].y);
+      for (let i = 1; i < arc.points.length; i++) {
+        ctx.lineTo(arc.points[i].x, arc.points[i].y);
+      }
+      ctx.strokeStyle = `rgba(150,240,255,${arc.life * 0.9})`;
+      ctx.lineWidth = 2 * arc.life;
+      ctx.stroke();
+      // Bright core
+      ctx.beginPath();
+      ctx.moveTo(arc.points[0].x, arc.points[0].y);
+      for (let i = 1; i < arc.points.length; i++) {
+        ctx.lineTo(arc.points[i].x, arc.points[i].y);
+      }
+      ctx.strokeStyle = `rgba(220,255,255,${arc.life * 0.7})`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
   }
   ctx.restore();
   ctx.globalAlpha = 1;

@@ -209,7 +209,7 @@ export class Toolbar {
       const colorMap = {
         normal: '#7b68ee', iron: '#8a8a8a', bouncy: '#ff69b4',
         magnetN: '#ff4444', magnetS: '#4444ff', bomb: '#222222',
-        fireball: '#ff4400',
+        fireball: '#ff4400', plasma: '#00ffff',
       };
       const preview = document.createElement('div');
       preview.className = 'inv-ball-preview';

@@ -81,6 +81,19 @@ export const BALL_TYPES = {
     icon: '🔥',
     desc: '불꽃을 내뿜으며 닿는 모든 공을 파괴!',
   },
+  plasma: {
+    name: '플라즈마볼',
+    radius: 15,
+    density: 0.007,
+    restitution: 0.5,
+    friction: 0.25,
+    color: '#00ffff',
+    icon: '⚡',
+    desc: '2초마다 전기 연쇄! 주변 공을 차례로 파괴한다.',
+    chainRange: 150,
+    chainInterval: 2000,
+    chainCount: 3,
+  },
 };
 
 export class PhysicsWorld {
@@ -110,12 +123,14 @@ export class PhysicsWorld {
     this.onBombExplode = null;
     this.onLaunch = null;
     this.onTrampolineHit = null; // (bodyId, x, y, normalX, normalY)
+    this.onPlasmaChain = null;
 
     this._debris = [];
     this._bombs = []; // Active bomb timers
     this._launchTrails = []; // Launch trail particles
     this._impactEffects = []; // Collision impact particles
     this._fireParticles = []; // Fireball flame particles
+    this._plasmaArcs = []; // Plasma electric arc particles
 
     this._createBoundaries();
     this._setupOOBDetection();
@@ -127,6 +142,7 @@ export class PhysicsWorld {
     this._setupBombTimers();
     this._setupImpactEffects();
     this._setupFireball();
+    this._setupPlasma();
     this._setupRotatingWalls();
 
     Matter.Runner.run(this._runner, this._engine);
@@ -707,6 +723,103 @@ export class PhysicsWorld {
     return this._fireParticles;
   }
 
+  // ── Plasma (Electric Chain) ──────────────────────────────────────────────
+  _setupPlasma() {
+    Matter.Events.on(this._engine, 'afterUpdate', () => {
+      const now = Date.now();
+      for (const body of this._bodies) {
+        if (body._ballType !== 'plasma') continue;
+        const def = BALL_TYPES.plasma;
+        if (!body._lastChainTime) body._lastChainTime = now;
+        if (now - body._lastChainTime < def.chainInterval) continue;
+
+        // Find nearby non-plasma balls
+        const candidates = this._bodies.filter(
+          b => b._type === 'ball' && b !== body && b._ballType !== 'plasma'
+        );
+        if (candidates.length === 0) continue;
+
+        body._lastChainTime = now;
+        let prev = body;
+        const hit = new Set();
+        for (let chain = 0; chain < def.chainCount; chain++) {
+          let closest = null;
+          let closestDist = Infinity;
+          for (const c of candidates) {
+            if (hit.has(c)) continue;
+            const d = Math.hypot(c.position.x - prev.position.x, c.position.y - prev.position.y);
+            if (d < closestDist && d <= def.chainRange) {
+              closest = c;
+              closestDist = d;
+            }
+          }
+          if (!closest) break;
+
+          hit.add(closest);
+          this._spawnElectricArc(prev.position.x, prev.position.y, closest.position.x, closest.position.y);
+          this._killQueue.push(closest);
+          prev = closest;
+        }
+        if (hit.size > 0 && this.onPlasmaChain) this.onPlasmaChain();
+      }
+    });
+  }
+
+  _spawnElectricArc(x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const dist = Math.hypot(dx, dy);
+    const segments = 6 + Math.floor(dist / 20);
+    const points = [];
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const jitter = i === 0 || i === segments ? 0 : (Math.random() - 0.5) * 20;
+      const nx = -dy / dist;
+      const ny = dx / dist;
+      points.push({
+        x: x1 + dx * t + nx * jitter,
+        y: y1 + dy * t + ny * jitter,
+      });
+    }
+    this._plasmaArcs.push({
+      points,
+      life: 1.0,
+      decay: 0.06,
+    });
+    // Spark burst at target
+    for (let i = 0; i < 8; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 1 + Math.random() * 3;
+      this._plasmaArcs.push({
+        points: null,
+        spark: true,
+        x: x2, y: y2,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 1.0,
+        decay: 0.06 + Math.random() * 0.04,
+        size: 2 + Math.random() * 3,
+      });
+    }
+  }
+
+  updatePlasmaArcs() {
+    for (let i = this._plasmaArcs.length - 1; i >= 0; i--) {
+      const p = this._plasmaArcs[i];
+      if (p.spark) {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.05;
+      }
+      p.life -= p.decay;
+      if (p.life <= 0) this._plasmaArcs.splice(i, 1);
+    }
+  }
+
+  get plasmaArcs() {
+    return this._plasmaArcs;
+  }
+
   updateExplosions() {
     for (let i = this._explosions.length - 1; i >= 0; i--) {
       const p = this._explosions[i];
@@ -971,6 +1084,7 @@ export class PhysicsWorld {
 
   clearAll() {
     this._bombs = [];
+    this._plasmaArcs = [];
     this._lineHealth.clear();
     for (let i = this._bodies.length - 1; i >= 0; i--) {
       this._destroyBody(i);
