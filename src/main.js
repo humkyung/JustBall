@@ -42,6 +42,13 @@ world.onBombExplode = () => sound.playBombExplode();
 world.onLaunch = (power) => sound.playLaunch(power);
 world.onImpact = (intensity) => sound.playImpact(intensity);
 world.onPlasmaChain = () => sound.playExplosion();
+world.onStarCollect = (value) => {
+  sound.playStarCollect();
+  scorePopups.push({ value, x: 60, y: 30, life: 1.0 });
+};
+
+// Score popup animation state
+const scorePopups = [];
 
 // Trampoline squish animation state: Map<bodyId, {startTime, nx, ny, speed}>
 const trampolineHits = new Map();
@@ -127,6 +134,19 @@ function render() {
       const by = body.position.y;
       const ballType = body._ballType || 'normal';
       const ballColor = body._ballColor || '#7b68ee';
+
+      // Power boost glow
+      if (body._powerBoost) {
+        const pulse = Math.sin(Date.now() / 150) * 0.3 + 0.7;
+        const glowR = BALL_RADIUS + 10;
+        const grd = ctx.createRadialGradient(bx, by, BALL_RADIUS * 0.5, bx, by, glowR);
+        grd.addColorStop(0, `rgba(255, 215, 0, ${0.5 * pulse})`);
+        grd.addColorStop(1, 'rgba(255, 140, 0, 0)');
+        ctx.beginPath();
+        ctx.arc(bx, by, glowR, 0, Math.PI * 2);
+        ctx.fillStyle = grd;
+        ctx.fill();
+      }
 
       // Selection ring for hovered ball
       if (body === hoveredBall) {
@@ -557,6 +577,53 @@ function render() {
       }
 
       ctx.globalAlpha = 1;
+    } else if (body._type === 'star') {
+      const sx = body.position.x;
+      const sy = body.position.y;
+      const now = Date.now();
+
+      // Floating animation
+      const floatY = Math.sin(now / 500 + body.id) * 3;
+      const rotation = (now / 1000 + body.id) % (Math.PI * 2);
+
+      // Outer glow
+      const glowR = 28 + Math.sin(now / 300) * 4;
+      const glow = ctx.createRadialGradient(sx, sy + floatY, 4, sx, sy + floatY, glowR);
+      glow.addColorStop(0, 'rgba(255, 215, 0, 0.6)');
+      glow.addColorStop(0.5, 'rgba(255, 215, 0, 0.2)');
+      glow.addColorStop(1, 'rgba(255, 215, 0, 0)');
+      ctx.beginPath();
+      ctx.arc(sx, sy + floatY, glowR, 0, Math.PI * 2);
+      ctx.fillStyle = glow;
+      ctx.fill();
+
+      // 5-point star shape
+      ctx.save();
+      ctx.translate(sx, sy + floatY);
+      ctx.rotate(rotation);
+      ctx.beginPath();
+      const outerR = 14;
+      const innerR = 6;
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 === 0 ? outerR : innerR;
+        const a = (Math.PI * 2 * i) / 10 - Math.PI / 2;
+        if (i === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+        else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      }
+      ctx.closePath();
+
+      // Golden gradient fill
+      const starGrd = ctx.createRadialGradient(0, 0, 0, 0, 0, outerR);
+      starGrd.addColorStop(0, '#fff8dc');
+      starGrd.addColorStop(0.4, '#ffd700');
+      starGrd.addColorStop(1, '#daa520');
+      ctx.fillStyle = starGrd;
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
     }
   }
 
@@ -622,6 +689,44 @@ function render() {
       ctx.font = '12px "Segoe UI", sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(`${powerPct}%`, bx, by - BALL_RADIUS - 10);
+
+      // Trajectory prediction (Verlet integration matching Matter.js)
+      // Matter.js internals at 120fps (delta=8.333ms, baseDelta=16.667ms):
+      //   setVelocity stores positionPrev = pos - v * (deltaTime/baseDelta)
+      //   Body.update first step: correction = delta/body.deltaTime = 8.333/16.667 = 0.5
+      //   So first step velocity = v * 0.5, subsequent steps correction = 1.0
+      //   gravAccel = gravity.y(1.2) * scale(0.001) * delta²(69.44) = 0.0833
+      //   airFriction = 1 - frictionAir(0.01) * (delta/baseDelta) = 0.995
+      const speed = power;
+      let tx = bx;
+      let ty = by;
+      let tvx = nx * speed;
+      let tvy = ny * speed;
+      const gravAccel = 0.0833;
+      const airFriction = 0.995;
+      const maxSteps = 120;
+      const dotInterval = 3;
+
+      for (let step = 0; step < maxSteps; step++) {
+        // First step: correction=0.5 halves the initial velocity
+        const corr = step === 0 ? 0.5 : 1.0;
+        tvx = tvx * corr * airFriction;
+        tvy = tvy * corr * airFriction + gravAccel;
+        tx += tvx;
+        ty += tvy;
+
+        if (tx < 0 || tx > W || ty > H) break;
+
+        if (step % dotInterval === 0) {
+          const fade = 1 - step / maxSteps;
+          ctx.globalAlpha = 0.4 * fade;
+          ctx.beginPath();
+          ctx.arc(tx, ty, 2 * fade + 1, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -774,6 +879,60 @@ function render() {
   ctx.restore();
   ctx.globalAlpha = 1;
 
+  // Update and draw star collection effects (additive blending)
+  world.updateStarEffects();
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of world.starEffects) {
+    ctx.globalAlpha = p.life;
+    if (p.flash) {
+      const radius = p.size * (1 - p.life * 0.5);
+      const grd = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
+      grd.addColorStop(0, `rgba(255, 255, 200, ${p.life * 0.8})`);
+      grd.addColorStop(1, 'rgba(255, 215, 0, 0)');
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = grd;
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+
+  // Score UI (top-left)
+  if (world.score > 0 || scorePopups.length > 0) {
+    ctx.fillStyle = '#ffd700';
+    ctx.font = 'bold 20px "Segoe UI", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`\u2605 ${world.score}`, 12, 12);
+
+    // Power mode indicator
+    if (toolbar.powerMode) {
+      ctx.fillStyle = '#ff6600';
+      ctx.font = 'bold 14px "Segoe UI", sans-serif';
+      ctx.fillText('POWER [Q]', 12, 38);
+    }
+
+    // Score popups
+    for (let i = scorePopups.length - 1; i >= 0; i--) {
+      const pop = scorePopups[i];
+      ctx.globalAlpha = pop.life;
+      ctx.fillStyle = '#ffd700';
+      ctx.font = 'bold 16px "Segoe UI", sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(`+${pop.value}`, pop.x + 60, pop.y - (1 - pop.life) * 30);
+      pop.life -= 0.02;
+      if (pop.life <= 0) scorePopups.splice(i, 1);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // Pause overlay
   if (paused) {
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
@@ -792,7 +951,9 @@ function render() {
 
   // Update status
   const ballType = BALL_TYPES[toolbar.selectedBallType];
-  statusEl.textContent = `Bodies: ${world.bodyCount} | Ball: ${ballType.name}${paused ? '  |  PAUSED (Space)' : ''}`;
+  const scoreStr = world.score > 0 ? ` | \u2605 ${world.score}` : '';
+  const powerStr = toolbar.powerMode ? ' | POWER ON' : '';
+  statusEl.textContent = `Bodies: ${world.bodyCount} | Ball: ${ballType.name}${scoreStr}${powerStr}${paused ? '  |  PAUSED (Space)' : ''}`;
 
   requestAnimationFrame(render);
 }

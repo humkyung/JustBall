@@ -208,6 +208,39 @@ export class SoundSystem {
     osc.stop(t + 0.5);
   }
 
+  playStarCollect() {
+    if (!this._ctx_ready()) return;
+    const ctx = this._ctx;
+    const t = ctx.currentTime;
+
+    // Bright chime: two ascending sine tones
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(800, t);
+    osc1.frequency.exponentialRampToValueAtTime(1200, t + 0.08);
+    gain1.gain.setValueAtTime(0.2, t);
+    gain1.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+    osc1.start(t);
+    osc1.stop(t + 0.2);
+
+    // Second higher tone with slight delay
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(1200, t + 0.06);
+    osc2.frequency.exponentialRampToValueAtTime(1600, t + 0.14);
+    gain2.gain.setValueAtTime(0.001, t);
+    gain2.gain.setValueAtTime(0.15, t + 0.06);
+    gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+    osc2.start(t + 0.06);
+    osc2.stop(t + 0.25);
+  }
+
   playLaunch(power = 0.5) {
     if (!this._ctx_ready()) return;
     const ctx = this._ctx;

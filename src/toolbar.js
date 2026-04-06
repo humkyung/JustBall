@@ -25,6 +25,7 @@ export class Toolbar {
     this._dragOffset = { x: 0, y: 0 };
     this._selectedBallType = 'normal';
     this._inventoryOpen = false;
+    this._powerMode = false;
     // Ball launch state
     this._launchBall = null;
     this._launchStart = null;
@@ -306,6 +307,10 @@ export class Toolbar {
         e.preventDefault();
         this._closeInventory();
       }
+      if (e.code === 'KeyQ' && e.target === document.body) {
+        e.preventDefault();
+        this._powerMode = !this._powerMode;
+      }
     });
   }
 
@@ -367,6 +372,9 @@ export class Toolbar {
       case 'boost':
         this._world.applyBoost(pos.x, pos.y);
         break;
+      case 'star':
+        this._world.addStar(pos.x, pos.y);
+        break;
     }
   }
 
@@ -403,8 +411,14 @@ export class Toolbar {
         const speed = Math.min(dist * 0.15, 30);
         const nx = dx / dist;
         const ny = dy / dist;
+
+        // Power mode: spend 10 score for 3x damage
+        if (this._powerMode && this._world.spendScore(10)) {
+          ball._powerBoost = true;
+        }
+
         this._world.launchBody(ball, nx * speed, ny * speed);
-        this._world.spawnLaunchEffect(ball.position.x, ball.position.y, nx, ny, speed);
+        this._world.spawnLaunchEffect(ball.position.x, ball.position.y, nx, ny, speed, ball._powerBoost);
       }
       return;
     }
@@ -423,7 +437,8 @@ export class Toolbar {
   _updateCursor() {
     switch (this._tool) {
       case 'ball':
-      case 'wall':   this._canvas.style.cursor = 'crosshair'; break;
+      case 'wall':
+      case 'star':   this._canvas.style.cursor = 'crosshair'; break;
       case 'eraser':   this._canvas.style.cursor = 'pointer';   break;
       case 'boost':    this._canvas.style.cursor = 'cell';      break;
     }
@@ -438,6 +453,7 @@ export class Toolbar {
   get hoverPos()     { return this._hoverPos; }
   get inventoryOpen(){ return this._inventoryOpen; }
   get selectedBallType() { return this._selectedBallType; }
+  get powerMode() { return this._powerMode; }
 
   get launchGuide() {
     if (!this._launchBall || !this._launchStart || !this._launchCurrent) return null;

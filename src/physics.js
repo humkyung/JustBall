@@ -131,6 +131,10 @@ export class PhysicsWorld {
     this._impactEffects = []; // Collision impact particles
     this._fireParticles = []; // Fireball flame particles
     this._plasmaArcs = []; // Plasma electric arc particles
+    this._starEffects = []; // Star collection particles
+
+    this._score = 0;
+    this.onStarCollect = null;
 
     this._createBoundaries();
     this._setupOOBDetection();
@@ -144,6 +148,7 @@ export class PhysicsWorld {
     this._setupFireball();
     this._setupPlasma();
     this._setupRotatingWalls();
+    this._setupStarCollection();
 
     Matter.Runner.run(this._runner, this._engine);
   }
@@ -290,6 +295,11 @@ export class PhysicsWorld {
         const speed = Math.hypot(ball.velocity.x, ball.velocity.y);
         if (speed > 15) {
           damage += 1;
+        }
+
+        // Power boost: 3x damage multiplier
+        if (ball._powerBoost) {
+          damage *= 3;
         }
 
         // Initialize health if not set (base durability = 10)
@@ -1006,9 +1016,13 @@ export class PhysicsWorld {
     Matter.Body.setVelocity(body, { x: vx, y: vy });
   }
 
-  spawnLaunchEffect(x, y, nx, ny, speed) {
+  spawnLaunchEffect(x, y, nx, ny, speed, powerBoost = false) {
     const power = speed / 30; // 0~1
     const count = Math.floor(8 + power * 12);
+
+    // Color scheme: golden for power boost, default blue/white otherwise
+    const colorA = powerBoost ? '#ffd700' : '#ffffff';
+    const colorB = powerBoost ? '#ff8c00' : '#aaccff';
 
     // Burst particles spreading backward (opposite to launch dir)
     for (let i = 0; i < count; i++) {
@@ -1023,7 +1037,7 @@ export class PhysicsWorld {
         life: 1.0,
         decay: 0.03 + Math.random() * 0.02,
         size: 2 + Math.random() * 3,
-        color: Math.random() > 0.5 ? '#ffffff' : '#aaccff',
+        color: Math.random() > 0.5 ? colorA : colorB,
       });
     }
 
@@ -1036,7 +1050,7 @@ export class PhysicsWorld {
       size: 5,
       ring: true,
       maxRadius: 20 + power * 25,
-      color: '#ffffff',
+      color: powerBoost ? '#ffd700' : '#ffffff',
     });
 
     // Speed lines along launch direction
@@ -1082,10 +1096,111 @@ export class PhysicsWorld {
     return this._launchTrails;
   }
 
+  // ── Star item ──────────────────────────────────────────────────────────────
+
+  addStar(x, y) {
+    const star = Matter.Bodies.circle(x, y, 18, {
+      isStatic: true,
+      isSensor: true,
+      label: 'star',
+      render: { fillStyle: '#ffd700' },
+    });
+    star._type = 'star';
+    star._starValue = 10;
+    Matter.Composite.add(this._world, star);
+    this._bodies.push(star);
+    return star;
+  }
+
+  _setupStarCollection() {
+    const STAR_COLLECT_RADIUS = 33; // ball radius (15) + star radius (18)
+
+    Matter.Events.on(this._engine, 'afterUpdate', () => {
+      for (let i = this._bodies.length - 1; i >= 0; i--) {
+        const star = this._bodies[i];
+        if (star._type !== 'star') continue;
+
+        for (const body of this._bodies) {
+          if (body._type !== 'ball') continue;
+          const dx = body.position.x - star.position.x;
+          const dy = body.position.y - star.position.y;
+          if (dx * dx + dy * dy < STAR_COLLECT_RADIUS * STAR_COLLECT_RADIUS) {
+            this._score += star._starValue;
+            this._spawnStarEffect(star.position.x, star.position.y);
+            if (this.onStarCollect) this.onStarCollect(star._starValue);
+            this._destroyBody(i);
+            break;
+          }
+        }
+      }
+    });
+  }
+
+  _spawnStarEffect(x, y) {
+    // Radial golden particles
+    const count = 20;
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.4;
+      const speed = 2 + Math.random() * 4;
+      this._starEffects.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 1.0,
+        decay: 0.02 + Math.random() * 0.02,
+        size: 2 + Math.random() * 4,
+        color: Math.random() > 0.4 ? '#ffd700' : '#fff8dc',
+      });
+    }
+    // Central flash
+    this._starEffects.push({
+      x, y,
+      vx: 0, vy: 0,
+      life: 1.0,
+      decay: 0.06,
+      size: 25,
+      flash: true,
+      color: '#ffd700',
+    });
+  }
+
+  updateStarEffects() {
+    for (let i = this._starEffects.length - 1; i >= 0; i--) {
+      const p = this._starEffects[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      if (!p.flash) {
+        p.vy += 0.05;
+        p.vx *= 0.98;
+      }
+      p.life -= p.decay;
+      if (p.life <= 0) {
+        this._starEffects.splice(i, 1);
+      }
+    }
+  }
+
+  get starEffects() {
+    return this._starEffects;
+  }
+
+  get score() {
+    return this._score;
+  }
+
+  spendScore(amount) {
+    if (this._score >= amount) {
+      this._score -= amount;
+      return true;
+    }
+    return false;
+  }
+
   clearAll() {
     this._bombs = [];
     this._plasmaArcs = [];
     this._lineHealth.clear();
+    this._score = 0;
     for (let i = this._bodies.length - 1; i >= 0; i--) {
       this._destroyBody(i);
     }
