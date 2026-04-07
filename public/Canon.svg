@@ -1,0 +1,38 @@
+<svg width="400" height="300" viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="barrelClip">
+      <path d="M 80 160 L 320 185 A 5 5 0 0 1 325 190 L 325 230 A 5 5 0 0 1 320 235 L 80 260 A 50 50 0 0 1 80 160 Z"/>
+    </clipPath>
+  </defs>
+
+  <g transform="translate(30, -10)">
+      
+      <g transform="rotate(-35, 160, 220)">
+        
+        <path d="M 75 165 Q 40 110 15 130" fill="none" stroke="#dce4ec" stroke-width="14" stroke-linecap="round"/>
+
+        <rect x="10" y="195" width="40" height="30" rx="12" fill="#333333"/>
+
+        <path d="M 80 160 L 320 185 A 5 5 0 0 1 325 190 L 325 230 A 5 5 0 0 1 320 235 L 80 260 A 50 50 0 0 1 80 160 Z" fill="#5e5e5e"/>
+
+        <g clip-path="url(#barrelClip)">
+          <path d="M 80 215 Q 200 215 325 210 L 325 240 L 80 260 Z" fill="#454545"/>
+        </g>
+
+        <rect x="315" y="172" width="25" height="76" rx="10" fill="#333333"/>
+      </g>
+
+      <g transform="translate(160, 220)">
+        <circle cx="-2" cy="2" r="64" fill="#333333" opacity="0.3"/>
+        
+        <circle cx="0" cy="0" r="64" fill="#c87c22"/>
+        
+        <circle cx="0" cy="0" r="42" fill="#a8b5c2"/>
+        
+        <circle cx="3" cy="-3" r="42" fill="#dae3ea"/>
+        
+        <circle cx="3" cy="-3" r="16" fill="#c87c22"/>
+      </g>
+      
+  </g>
+</svg>

@@ -8,6 +8,14 @@ const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
 
+// Pre-load cannon SVG for launcher rendering
+const cannonImg = new Image();
+cannonImg.src = '/Canon.svg';
+let cannonReady = false;
+cannonImg.onload = () => { cannonReady = true; };
+// SVG barrel default angle (points upper-left at -35° from horizontal in the SVG)
+const CANNON_DEFAULT_ANGLE = (-35) * Math.PI / 180; // ≈ -0.611 rad
+
 // Resize canvas drawing buffer to match its CSS layout size, respecting devicePixelRatio
 function resizeCanvas() {
   const toolbar = document.getElementById('toolbar');
@@ -624,6 +632,28 @@ function render() {
       ctx.lineWidth = 1;
       ctx.stroke();
       ctx.restore();
+    } else if (body._type === 'launcher') {
+      if (cannonReady) {
+        const lx = body.position.x;
+        const ly = body.position.y;
+
+        // SVG is 400x300, wheel center at (190, 210)
+        const scale = 80 / 300;
+        const drawW = 400 * scale;
+        const drawH = 300 * scale;
+        const ox = 190 * scale;
+        const oy = 210 * scale;
+
+        // Rotate barrel toward aiming direction
+        const aimAngle = body._barrelAngle != null ? body._barrelAngle : CANNON_DEFAULT_ANGLE;
+        const rotation = aimAngle - CANNON_DEFAULT_ANGLE;
+
+        ctx.save();
+        ctx.translate(lx, ly);
+        ctx.rotate(rotation);
+        ctx.drawImage(cannonImg, -ox, -oy, drawW, drawH);
+        ctx.restore();
+      }
     }
   }
 
@@ -642,6 +672,48 @@ function render() {
     ctx.stroke();
   }
 
+  // Draw launcher countdown timer arc
+  const timerRatio = toolbar.launchTimerRatio;
+  if (timerRatio > 0 && world.launcher) {
+    const lx = world.launcher.position.x;
+    const ly = world.launcher.position.y;
+    const arcR = 28;
+
+    // Background ring (dark)
+    ctx.beginPath();
+    ctx.arc(lx, ly, arcR, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // Countdown arc (shrinks as time passes)
+    const startAngle = -Math.PI / 2;
+    const endAngle = startAngle + Math.PI * 2 * timerRatio;
+    // Color: green → yellow → red
+    let arcR_val, arcG_val;
+    if (timerRatio > 0.5) {
+      arcR_val = Math.round((1 - timerRatio) * 2 * 255);
+      arcG_val = 255;
+    } else {
+      arcR_val = 255;
+      arcG_val = Math.round(timerRatio * 2 * 255);
+    }
+    ctx.beginPath();
+    ctx.arc(lx, ly, arcR, startAngle, endAngle);
+    ctx.strokeStyle = `rgba(${arcR_val}, ${arcG_val}, 50, 0.9)`;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    // Seconds text
+    const secs = Math.ceil(timerRatio * 3);
+    ctx.fillStyle = `rgba(${arcR_val}, ${arcG_val}, 50, 0.9)`;
+    ctx.font = 'bold 14px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(secs + '', lx, ly - arcR - 12);
+  }
+
   // Draw launch guide (slingshot aiming line)
   const guide = toolbar.launchGuide;
   if (guide) {
@@ -654,6 +726,12 @@ function render() {
     if (dist > 5) {
       const nx = dx / dist;
       const ny = dy / dist;
+
+      // Update launcher barrel angle while aiming
+      if (world.launcher) {
+        world.launcher._barrelAngle = Math.atan2(ny, nx);
+      }
+
       const arrowLen = Math.min(dist * 0.8, 120);
 
       // Direction arrow from ball

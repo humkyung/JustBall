@@ -134,6 +134,7 @@ export class PhysicsWorld {
     this._starEffects = []; // Star collection particles
 
     this._score = 0;
+    this._launcher = null; // Current launcher body (only one allowed)
     this.onStarCollect = null;
 
     this._createBoundaries();
@@ -853,6 +854,16 @@ export class PhysicsWorld {
     this._bodies.splice(index, 1);
   }
 
+  removeBody(body) {
+    const idx = this._bodies.indexOf(body);
+    if (idx !== -1) {
+      this._removeBombTimer(body);
+      this._destroyBody(idx);
+      return true;
+    }
+    return false;
+  }
+
   addBall(x, y, type = 'normal') {
     const def = BALL_TYPES[type] || BALL_TYPES.normal;
     const ball = Matter.Bodies.circle(x, y, def.radius, {
@@ -1096,6 +1107,37 @@ export class PhysicsWorld {
     return this._launchTrails;
   }
 
+  // ── Launcher ───────────────────────────────────────────────────────────────
+
+  addLauncher(x, y) {
+    this.removeLauncher();
+
+    const launcher = Matter.Bodies.circle(x, y, 20, {
+      isStatic: true,
+      isSensor: true,
+      label: 'launcher',
+      render: { fillStyle: '#667788' },
+    });
+    launcher._type = 'launcher';
+
+    Matter.Composite.add(this._world, launcher);
+    this._bodies.push(launcher);
+    this._launcher = launcher;
+    return launcher;
+  }
+
+  removeLauncher() {
+    if (this._launcher) {
+      const idx = this._bodies.indexOf(this._launcher);
+      if (idx !== -1) this._destroyBody(idx);
+      this._launcher = null;
+    }
+  }
+
+  get launcher() {
+    return this._launcher;
+  }
+
   // ── Star item ──────────────────────────────────────────────────────────────
 
   addStar(x, y) {
@@ -1201,6 +1243,7 @@ export class PhysicsWorld {
     this._plasmaArcs = [];
     this._lineHealth.clear();
     this._score = 0;
+    this._launcher = null;
     for (let i = this._bodies.length - 1; i >= 0; i--) {
       this._destroyBody(i);
     }

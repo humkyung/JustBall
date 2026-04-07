@@ -30,6 +30,8 @@ export class Toolbar {
     this._launchBall = null;
     this._launchStart = null;
     this._launchCurrent = null;
+    this._launchTimer = null; // 3-second auto-fire timer for launcher
+    this._launchTimerStart = 0; // timestamp when timer started
 
     this._setupToolbar();
     this._setupCanvas();
@@ -303,9 +305,18 @@ export class Toolbar {
         e.preventDefault();
         this._inventoryOpen ? this._closeInventory() : this._openInventory();
       }
-      if (e.code === 'Escape' && this._inventoryOpen) {
-        e.preventDefault();
-        this._closeInventory();
+      if (e.code === 'Escape') {
+        if (this._launchBall) {
+          e.preventDefault();
+          this._cancelLaunchTimer();
+          const ball = this._launchBall;
+          this._launchBall = this._launchStart = this._launchCurrent = null;
+          this._world.unfreezeBody(ball);
+          this._world.removeBody(ball);
+        } else if (this._inventoryOpen) {
+          e.preventDefault();
+          this._closeInventory();
+        }
       }
       if (e.code === 'KeyQ' && e.target === document.body) {
         e.preventDefault();
@@ -354,12 +365,18 @@ export class Toolbar {
 
     switch (this._tool) {
       case 'ball': {
-        const ball = this._world.addBall(pos.x, pos.y, this._selectedBallType);
+        const launcher = this._world.launcher;
+        const spawnPos = launcher
+          ? { x: launcher.position.x, y: launcher.position.y }
+          : pos;
+        const ball = this._world.addBall(spawnPos.x, spawnPos.y, this._selectedBallType);
         this._launchBall    = ball;
-        this._launchStart   = pos;
+        this._launchStart   = spawnPos;
         this._launchCurrent = pos;
         this._world.freezeBody(ball);
         this._canvas.setPointerCapture(e.pointerId);
+        // 3-second auto-cancel when launching from launcher
+        this._startLaunchTimer(launcher);
         break;
       }
       case 'wall':
@@ -375,6 +392,28 @@ export class Toolbar {
       case 'star':
         this._world.addStar(pos.x, pos.y);
         break;
+      case 'launcher': {
+        const launcher = this._world.launcher;
+        if (launcher) {
+          // Check if clicking near the launcher (within 30px)
+          const ldx = pos.x - launcher.position.x;
+          const ldy = pos.y - launcher.position.y;
+          if (ldx * ldx + ldy * ldy < 30 * 30) {
+            // Click on launcher → spawn ball and start slingshot aiming
+            const ball = this._world.addBall(launcher.position.x, launcher.position.y, this._selectedBallType);
+            this._launchBall    = ball;
+            this._launchStart   = { x: launcher.position.x, y: launcher.position.y };
+            this._launchCurrent = pos;
+            this._world.freezeBody(ball);
+            this._canvas.setPointerCapture(e.pointerId);
+            this._startLaunchTimer(launcher);
+            break;
+          }
+        }
+        // Click elsewhere → place or move launcher
+        this._world.addLauncher(pos.x, pos.y);
+        break;
+      }
     }
   }
 
@@ -396,6 +435,7 @@ export class Toolbar {
 
   _onPointerUp(_e) {
     if (this._launchBall) {
+      this._cancelLaunchTimer();
       const ball  = this._launchBall;
       const start = this._launchStart;
       const end   = this._launchCurrent;
@@ -434,11 +474,53 @@ export class Toolbar {
     this._currentPath = [];
   }
 
+  _startLaunchTimer(launcher) {
+    this._cancelLaunchTimer();
+    if (!launcher) return;
+    this._launchTimerStart = Date.now();
+    this._launchTimer = setTimeout(() => {
+      if (this._launchBall) {
+        // Auto-fire with current aiming direction
+        const ball  = this._launchBall;
+        const start = this._launchStart;
+        const end   = this._launchCurrent;
+        this._launchBall = this._launchStart = this._launchCurrent = null;
+        this._launchTimerStart = 0;
+
+        const dx   = start.x - end.x;
+        const dy   = start.y - end.y;
+        const dist = Math.hypot(dx, dy);
+
+        this._world.unfreezeBody(ball);
+
+        if (dist > 5) {
+          const speed = Math.min(dist * 0.15, 30);
+          const nx = dx / dist;
+          const ny = dy / dist;
+          if (this._powerMode && this._world.spendScore(10)) {
+            ball._powerBoost = true;
+          }
+          this._world.launchBody(ball, nx * speed, ny * speed);
+          this._world.spawnLaunchEffect(ball.position.x, ball.position.y, nx, ny, speed, ball._powerBoost);
+        }
+      }
+    }, 3000);
+  }
+
+  _cancelLaunchTimer() {
+    if (this._launchTimer) {
+      clearTimeout(this._launchTimer);
+      this._launchTimer = null;
+    }
+    this._launchTimerStart = 0;
+  }
+
   _updateCursor() {
     switch (this._tool) {
       case 'ball':
       case 'wall':
-      case 'star':   this._canvas.style.cursor = 'crosshair'; break;
+      case 'star':
+      case 'launcher': this._canvas.style.cursor = 'crosshair'; break;
       case 'eraser':   this._canvas.style.cursor = 'pointer';   break;
       case 'boost':    this._canvas.style.cursor = 'cell';      break;
     }
@@ -454,6 +536,13 @@ export class Toolbar {
   get inventoryOpen(){ return this._inventoryOpen; }
   get selectedBallType() { return this._selectedBallType; }
   get powerMode() { return this._powerMode; }
+
+  /** Returns 0~1 countdown ratio (1 = just started, 0 = time's up). 0 if no timer. */
+  get launchTimerRatio() {
+    if (!this._launchTimerStart) return 0;
+    const elapsed = Date.now() - this._launchTimerStart;
+    return Math.max(0, 1 - elapsed / 3000);
+  }
 
   get launchGuide() {
     if (!this._launchBall || !this._launchStart || !this._launchCurrent) return null;
