@@ -10,7 +10,7 @@ const statusEl = document.getElementById('status');
 
 // Pre-load cannon SVG for launcher rendering
 const cannonImg = new Image();
-cannonImg.src = '/Canon.svg';
+cannonImg.src = `${import.meta.env.BASE_URL}Canon.svg`;
 let cannonReady = false;
 cannonImg.onload = () => { cannonReady = true; };
 // SVG barrel default angle (points upper-left at -35° from horizontal in the SVG)
