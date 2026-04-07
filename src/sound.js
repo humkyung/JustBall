@@ -297,7 +297,7 @@ export class SoundSystem {
     this._bgmPlaying = true;
 
     if (!this._bgmAudio) {
-      this._bgmAudio = new Audio('/bgm.mp3');
+      this._bgmAudio = new Audio(`${import.meta.env.BASE_URL}bgm.mp3`);
       this._bgmAudio.loop = true;
       this._bgmAudio.volume = 0.3;
     }
