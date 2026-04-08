@@ -137,6 +137,12 @@ export class PhysicsWorld {
     this._launcher = null; // Current launcher body (only one allowed)
     this.onStarCollect = null;
 
+    this._targets = []; // All target bodies
+    this._targetEffects = []; // Target explosion particles
+    this._stageClear = false;
+    this.onStageClear = null;
+    this.onTargetHit = null;
+
     this._createBoundaries();
     this._setupOOBDetection();
     this._setupKillDetection();
@@ -150,6 +156,7 @@ export class PhysicsWorld {
     this._setupPlasma();
     this._setupRotatingWalls();
     this._setupStarCollection();
+    this._setupTargetHit();
 
     Matter.Runner.run(this._runner, this._engine);
   }
@@ -1226,6 +1233,118 @@ export class PhysicsWorld {
     return this._starEffects;
   }
 
+  // ── Target item ────────────────────────────────────────────────────────────
+
+  addTarget(x, y) {
+    const target = Matter.Bodies.circle(x, y, 22, {
+      isStatic: true,
+      isSensor: true,
+      label: 'target',
+      render: { fillStyle: '#ff4444' },
+    });
+    target._type = 'target';
+    Matter.Composite.add(this._world, target);
+    this._bodies.push(target);
+    this._targets.push(target);
+    return target;
+  }
+
+  _setupTargetHit() {
+    const TARGET_HIT_RADIUS = 37; // ball radius (15) + target radius (22)
+
+    Matter.Events.on(this._engine, 'afterUpdate', () => {
+      if (this._stageClear) return;
+
+      for (let i = this._bodies.length - 1; i >= 0; i--) {
+        const target = this._bodies[i];
+        if (target._type !== 'target') continue;
+
+        for (const body of this._bodies) {
+          if (body._type !== 'ball') continue;
+          const dx = body.position.x - target.position.x;
+          const dy = body.position.y - target.position.y;
+          if (dx * dx + dy * dy < TARGET_HIT_RADIUS * TARGET_HIT_RADIUS) {
+            this._spawnTargetExplosion(target.position.x, target.position.y);
+            if (this.onTargetHit) this.onTargetHit(target);
+
+            // Remove from _targets array
+            const tIdx = this._targets.indexOf(target);
+            if (tIdx !== -1) this._targets.splice(tIdx, 1);
+
+            this._destroyBody(i);
+
+            // Check stage clear
+            if (this._targets.length === 0) {
+              this._stageClear = true;
+              if (this.onStageClear) this.onStageClear();
+            }
+            break;
+          }
+        }
+      }
+    });
+  }
+
+  _spawnTargetExplosion(x, y) {
+    const colors = ['#ff4444', '#ff8800', '#ffcc00', '#ffffff'];
+    const count = 30;
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.5;
+      const speed = 3 + Math.random() * 6;
+      this._targetEffects.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 1.0,
+        decay: 0.015 + Math.random() * 0.015,
+        size: 3 + Math.random() * 5,
+        color: colors[Math.floor(Math.random() * colors.length)],
+      });
+    }
+    // Central flash
+    this._targetEffects.push({
+      x, y,
+      vx: 0, vy: 0,
+      life: 1.0,
+      decay: 0.04,
+      size: 40,
+      flash: true,
+      color: '#ffcc00',
+    });
+  }
+
+  updateTargetEffects() {
+    for (let i = this._targetEffects.length - 1; i >= 0; i--) {
+      const p = this._targetEffects[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      if (!p.flash) {
+        p.vy += 0.08;
+        p.vx *= 0.97;
+      }
+      p.life -= p.decay;
+      if (p.life <= 0) {
+        this._targetEffects.splice(i, 1);
+      }
+    }
+  }
+
+  get targetEffects() {
+    return this._targetEffects;
+  }
+
+  get targets() {
+    return this._targets;
+  }
+
+  get stageClear() {
+    return this._stageClear;
+  }
+
+  resetStageClear() {
+    this._stageClear = false;
+  }
+
   get score() {
     return this._score;
   }
@@ -1244,6 +1363,9 @@ export class PhysicsWorld {
     this._lineHealth.clear();
     this._score = 0;
     this._launcher = null;
+    this._targets = [];
+    this._targetEffects = [];
+    this._stageClear = false;
     for (let i = this._bodies.length - 1; i >= 0; i--) {
       this._destroyBody(i);
     }

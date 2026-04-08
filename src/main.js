@@ -16,6 +16,12 @@ cannonImg.onload = () => { cannonReady = true; };
 // SVG barrel default angle (points upper-left at -35° from horizontal in the SVG)
 const CANNON_DEFAULT_ANGLE = (-35) * Math.PI / 180; // ≈ -0.611 rad
 
+// Pre-load target SVG for target rendering
+const targetImg = new Image();
+targetImg.src = `${import.meta.env.BASE_URL}Target.svg`;
+let targetReady = false;
+targetImg.onload = () => { targetReady = true; };
+
 // Resize canvas drawing buffer to match its CSS layout size, respecting devicePixelRatio
 function resizeCanvas() {
   const toolbar = document.getElementById('toolbar');
@@ -64,12 +70,29 @@ world.onTrampolineHit = (bodyId, nx, ny, speed) => {
   trampolineHits.set(bodyId, { startTime: performance.now(), nx, ny, speed });
 };
 
+// Target hit & stage clear callbacks
+let stageClearTime = 0;
+world.onTargetHit = () => { sound.playBombExplode(); };
+world.onStageClear = () => {
+  stageClearTime = performance.now();
+  paused = true;
+  Matter.Runner.stop(world.runner);
+};
+
 // Spacebar pause / resume
 let paused = false;
 
 document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && e.target === document.body) {
     e.preventDefault();
+    // Stage clear state: Space resets it
+    if (stageClearTime > 0) {
+      stageClearTime = 0;
+      world.resetStageClear();
+      paused = false;
+      Matter.Runner.run(world.runner, world.engine);
+      return;
+    }
     paused = !paused;
     if (paused) {
       Matter.Runner.stop(world.runner);
@@ -654,6 +677,54 @@ function render() {
         ctx.drawImage(cannonImg, -ox, -oy, drawW, drawH);
         ctx.restore();
       }
+    } else if (body._type === 'target') {
+      const tx = body.position.x;
+      const ty = body.position.y;
+      const now = Date.now();
+
+      // Floating animation
+      const floatY = Math.sin(now / 600 + body.id) * 4;
+
+      // Pulsing glow
+      const glowR = 32 + Math.sin(now / 400) * 5;
+      const glow = ctx.createRadialGradient(tx, ty + floatY, 6, tx, ty + floatY, glowR);
+      glow.addColorStop(0, 'rgba(255, 68, 68, 0.5)');
+      glow.addColorStop(0.5, 'rgba(255, 136, 0, 0.2)');
+      glow.addColorStop(1, 'rgba(255, 68, 68, 0)');
+      ctx.beginPath();
+      ctx.arc(tx, ty + floatY, glowR, 0, Math.PI * 2);
+      ctx.fillStyle = glow;
+      ctx.fill();
+
+      if (targetReady) {
+        // Draw Target SVG with flag flutter (skew from bottom pivot)
+        const targetH = 60;
+        const aspect = targetImg.naturalWidth / targetImg.naturalHeight || 0.5;
+        const targetW = targetH * aspect;
+        const t = now / 1000;
+        // Horizontal skew oscillation — pivot at bottom center so flag area flutters
+        const skew = Math.sin(t * 3.5 + body.id) * 0.04
+                   + Math.sin(t * 5.2 + body.id + 1.2) * 0.02;
+        ctx.save();
+        ctx.translate(tx, ty + floatY + targetH / 2); // pivot at bottom
+        ctx.transform(1, 0, skew, 1, 0, 0); // horizontal skew
+        ctx.drawImage(targetImg, -targetW / 2, -targetH, targetW, targetH);
+        ctx.restore();
+      } else {
+        // Fallback: draw a simple bullseye
+        ctx.beginPath();
+        ctx.arc(tx, ty + floatY, 18, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff4444';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(tx, ty + floatY, 10, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(tx, ty + floatY, 4, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff4444';
+        ctx.fill();
+      }
     }
   }
 
@@ -982,6 +1053,32 @@ function render() {
   ctx.restore();
   ctx.globalAlpha = 1;
 
+  // Update and draw target explosion effects (additive blending)
+  world.updateTargetEffects();
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of world.targetEffects) {
+    ctx.globalAlpha = p.life;
+    if (p.flash) {
+      const radius = p.size * (1 - p.life * 0.3);
+      const grd = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
+      grd.addColorStop(0, `rgba(255, 255, 200, ${p.life * 0.9})`);
+      grd.addColorStop(0.4, `rgba(255, 136, 0, ${p.life * 0.5})`);
+      grd.addColorStop(1, 'rgba(255, 68, 0, 0)');
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = grd;
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+
   // Score UI (top-left)
   if (world.score > 0 || scorePopups.length > 0) {
     ctx.fillStyle = '#ffd700';
@@ -1011,15 +1108,61 @@ function render() {
     ctx.globalAlpha = 1;
   }
 
-  // Pause overlay
-  if (paused) {
+  // Stage clear overlay
+  if (stageClearTime > 0) {
+    const elapsed = (performance.now() - stageClearTime) / 1000;
+    ctx.fillStyle = `rgba(0,0,0,${Math.min(0.55, elapsed * 1.5)})`;
+    ctx.fillRect(0, 0, W, H);
+
+    // Pulsing scale on text
+    const pulse = 1 + Math.sin(elapsed * 3) * 0.04;
+    ctx.save();
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(pulse, pulse);
+
+    // Gold title
+    ctx.fillStyle = '#ffd700';
+    ctx.font = 'bold 56px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = '#ff8800';
+    ctx.shadowBlur = 20;
+    ctx.fillText('STAGE CLEAR!', 0, 0);
+    ctx.shadowBlur = 0;
+
+    // Subtitle
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '18px "Segoe UI", sans-serif';
+    ctx.fillText('Press Space to continue', 0, 52);
+    ctx.restore();
+
+    // Celebratory sparkle particles (drawn procedurally)
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const sparkleCount = 12;
+    for (let i = 0; i < sparkleCount; i++) {
+      const angle = (Math.PI * 2 * i) / sparkleCount + elapsed * 0.5;
+      const dist = 80 + Math.sin(elapsed * 2 + i) * 30;
+      const sx = W / 2 + Math.cos(angle) * dist;
+      const sy = H / 2 + Math.sin(angle) * dist;
+      const alpha = 0.4 + Math.sin(elapsed * 4 + i * 0.8) * 0.3;
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+      ctx.fillStyle = i % 2 === 0 ? '#ffd700' : '#ffffff';
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  } else if (paused) {
+    // Pause overlay
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
     ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 48px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('⏸ PAUSED', W / 2, H / 2);
+    ctx.fillText('\u23f8 PAUSED', W / 2, H / 2);
     ctx.font = '18px "Segoe UI", sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
     ctx.fillText('Press Space to resume', W / 2, H / 2 + 52);
@@ -1031,7 +1174,8 @@ function render() {
   const ballType = BALL_TYPES[toolbar.selectedBallType];
   const scoreStr = world.score > 0 ? ` | \u2605 ${world.score}` : '';
   const powerStr = toolbar.powerMode ? ' | POWER ON' : '';
-  statusEl.textContent = `Bodies: ${world.bodyCount} | Ball: ${ballType.name}${scoreStr}${powerStr}${paused ? '  |  PAUSED (Space)' : ''}`;
+  const targetStr = world.targets.length > 0 ? ` | \uD83C\uDFAF ${world.targets.length}` : '';
+  statusEl.textContent = `Bodies: ${world.bodyCount} | Ball: ${ballType.name}${scoreStr}${powerStr}${targetStr}${paused ? '  |  PAUSED (Space)' : ''}`;
 
   requestAnimationFrame(render);
 }

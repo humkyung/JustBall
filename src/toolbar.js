@@ -392,6 +392,9 @@ export class Toolbar {
       case 'star':
         this._world.addStar(pos.x, pos.y);
         break;
+      case 'target':
+        this._world.addTarget(pos.x, pos.y);
+        break;
       case 'launcher': {
         const launcher = this._world.launcher;
         if (launcher) {
@@ -520,6 +523,7 @@ export class Toolbar {
       case 'ball':
       case 'wall':
       case 'star':
+      case 'target':
       case 'launcher': this._canvas.style.cursor = 'crosshair'; break;
       case 'eraser':   this._canvas.style.cursor = 'pointer';   break;
       case 'boost':    this._canvas.style.cursor = 'cell';      break;
