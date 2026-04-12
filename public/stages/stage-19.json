@@ -1,0 +1,33 @@
+{
+  "name": "19. 죽음의 계곡",
+  "data": {
+    "version": 1,
+    "designSize": { "w": 1024, "h": 768 },
+    "level": 19,
+    "locked": true,
+    "maxBalls": 3,
+    "lines": [
+      { "points": [{"x":64,"y":710},{"x":960,"y":710}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":350,"y":100},{"x":350,"y":650}], "color": "#e74c3c", "type": "kill", "rotating": false, "moving": false },
+      { "points": [{"x":650,"y":100},{"x":650,"y":650}], "color": "#e74c3c", "type": "kill", "rotating": false, "moving": false },
+      { "points": [{"x":350,"y":100},{"x":500,"y":80}], "color": "#e74c3c", "type": "kill", "rotating": false, "moving": false },
+      { "points": [{"x":500,"y":80},{"x":650,"y":100}], "color": "#e74c3c", "type": "kill", "rotating": false, "moving": false },
+      { "points": [{"x":400,"y":350},{"x":600,"y":350}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":400,"y":500},{"x":600,"y":500}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":450,"y":200},{"x":550,"y":200}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":200,"y":300},{"x":330,"y":150}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":670,"y":300},{"x":800,"y":150}], "color": "#333333", "type": "ground", "rotating": false, "moving": false }
+    ],
+    "balls": [],
+    "stars": [
+      {"x": 500, "y": 160},
+      {"x": 500, "y": 310},
+      {"x": 500, "y": 460}
+    ],
+    "targets": [
+      {"x": 500, "y": 660},
+      {"x": 500, "y": 420}
+    ],
+    "launcher": {"x": 120, "y": 650}
+  }
+}

@@ -1,12 +1,18 @@
-import { simplifyPath } from './simplify.js';
-import { BALL_TYPES } from './physics.js';
+import { BALL_TYPES, getSavedStages, saveStage, deleteStage } from './physics.js';
+import { loadDefaultStages, getStageProgress } from './defaultStages.js';
+
+// ── Launch speed constants ──────────────────────────────────────────────────
+const LAUNCH_SPEED_MULTIPLIER = 0.15; // drag distance → speed conversion
+const LAUNCH_MAX_SPEED = 30;          // maximum launch speed
+const LAUNCH_MIN_DRAG = 5;            // minimum drag distance to fire (px)
 
 const LINE_COLORS = [
-  { color: '#333333', label: '일반 선',      desc: '기본 지형선. 내구도 50.',                      rotating: false, moving: false },
-  { color: '#f5c542', label: '트램펄린 선',  desc: '공을 강하게 튕겨낸다. 내구도 15.',            rotating: false, moving: false },
-  { color: '#e74c3c', label: 'Kill 선',      desc: '닿으면 공이 파괴된다. 파괴 불가.',            rotating: false, moving: false },
-  { color: '#333333', label: '회전 벽',      desc: '360도 회전하는 벽. 일반 선 재질.',            rotating: true,  moving: false },
-  { color: '#333333', label: '움직이는 벽',  desc: '길이 방향으로 반복해서 이동하는 벽.',         rotating: false, moving: true  },
+  { type: 'ground', color: '#333333', label: '일반 선', desc: '기본 지형선. 내구도 50.', rotating: false, moving: false },
+  { type: 'bounce', color: '#f5c542', label: '트램펄린 선', desc: '공을 강하게 튕겨낸다. 내구도 15.', rotating: false, moving: false },
+  { type: 'kill', color: '#e74c3c', label: 'Kill 선', desc: '닿으면 공이 파괴된다. 파괴 불가.', rotating: false, moving: false },
+  { type: 'ground', color: '#333333', label: '회전 벽', desc: '360도 회전하는 벽. 일반 선 재질.', rotating: true, moving: false },
+  { type: 'ground', color: '#333333', label: '움직이는 벽', desc: '길이 방향으로 반복해서 이동하는 벽.', rotating: false, moving: true },
+  { type: 'ironwall', color: '#808080', label: '철벽', desc: '파괴 불가능한 벽. 벽돌 무늬.', rotating: false, moving: false },
 ];
 
 export class Toolbar {
@@ -16,6 +22,7 @@ export class Toolbar {
     this._sound = sound;
     this._tool = 'ball';
     this._color = '#333333';
+    this._lineType = 'ground';
     this._lineRotating = false;
     this._lineMoving = false;
     this._drawing = false;
@@ -32,6 +39,15 @@ export class Toolbar {
     this._launchCurrent = null;
     this._launchTimer = null; // 3-second auto-fire timer for launcher
     this._launchTimerStart = 0; // timestamp when timer started
+    this._inputEnabled = true;  // disabled during lobby
+    this._playModeOnly = false; // when true, only ball launching is allowed (play/test mode)
+    this._loadedStageName = null;     // name of the currently loaded stage (for Ctrl+S quick save)
+    this._loadedStageFilename = null; // source filename (e.g. 'stage-01.json') for file save
+    // Wall editing state
+    this._editingLineGroup = null;
+    this._editMode = null;        // 'move' | 'endpoint'
+    this._editPointIndex = 0;     // 0 = start, 1 = end
+    this._editLastPos = null;     // previous frame position (for move delta)
 
     this._setupToolbar();
     this._setupCanvas();
@@ -144,14 +160,50 @@ export class Toolbar {
         padding: 10px 14px; border: 2px solid #0f3460; border-radius: 10px;
         background: #1a1a2e;
       }
-      #inv-bgm-row span { color: #e0e0e0; font-size: 13px; }
-      #inv-bgm-toggle {
-        padding: 6px 20px; border: 2px solid #0f3460; border-radius: 6px;
+
+      /* Stage map section */
+      #inv-stage-row {
+        display: flex; gap: 8px; margin-bottom: 8px;
+      }
+      #inv-stage-name {
+        flex: 1; padding: 8px 12px; border: 2px solid #0f3460; border-radius: 6px;
+        background: #1a1a2e; color: #e0e0e0; font-size: 13px; font-family: inherit;
+        outline: none; box-sizing: border-box;
+      }
+      #inv-stage-name:focus { border-color: #533483; }
+      #inv-stage-save {
+        padding: 8px 16px; border: 2px solid #0f3460; border-radius: 6px;
+        background: #533483; color: #fff; cursor: pointer; font-size: 13px;
+        font-family: inherit; transition: all 0.15s; white-space: nowrap;
+      }
+      #inv-stage-save:hover { background: #7b68ee; }
+      #inv-stage-list {
+        max-height: 150px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;
+      }
+      .inv-stage-entry {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 8px 12px; border: 2px solid #0f3460; border-radius: 8px;
+        background: #1a1a2e; transition: all 0.15s;
+      }
+      .inv-stage-entry:hover { border-color: #533483; }
+      .inv-stage-entry-name { color: #e0e0e0; font-size: 13px; flex: 1; }
+      .inv-stage-entry-btns { display: flex; gap: 6px; }
+      .inv-stage-entry-btns button {
+        padding: 4px 10px; border: 1px solid #0f3460; border-radius: 4px;
+        background: #1a1a2e; color: #e0e0e0; cursor: pointer; font-size: 11px;
+        font-family: inherit; transition: all 0.15s;
+      }
+      .inv-stage-entry-btns .load-btn:hover { background: #533483; }
+      .inv-stage-entry-btns .export-btn:hover { background: #2e7d32; }
+      .inv-stage-entry-btns .del-btn:hover { background: #e74c3c; }
+      #inv-stage-import {
+        width: 100%; margin-top: 8px; padding: 8px 16px;
+        border: 2px dashed #0f3460; border-radius: 6px;
         background: #1a1a2e; color: #e0e0e0; cursor: pointer;
         font-size: 13px; font-family: inherit; transition: all 0.15s;
+        text-align: center;
       }
-      #inv-bgm-toggle:hover { background: #0f3460; }
-      #inv-bgm-toggle.on { background: #533483; border-color: #7b68ee; color: #fff; }
+      #inv-stage-import:hover { border-color: #533483; background: #0f3460; }
 
       /* Description bar */
       #inv-desc {
@@ -174,18 +226,23 @@ export class Toolbar {
 
         <div class="inv-section-title">공 종류</div>
         <div id="inv-ball-grid"></div>
-
         <hr class="inv-divider">
 
+        <div class="inv-section inv-section-lines">
         <div class="inv-section-title">선 종류</div>
         <div id="inv-line-row"></div>
+        </div>
 
-        <hr class="inv-divider">
-
-        <div class="inv-section-title">BGM</div>
-        <div id="inv-bgm-row">
-          <span>🎵 배경음악</span>
-          <button id="inv-bgm-toggle" class="">OFF</button>
+        <div class="inv-section inv-section-stages">
+          <hr class="inv-divider">
+          <div class="inv-section-title">스테이지 맵</div>
+          <div id="inv-stage-row">
+            <input id="inv-stage-name" type="text" placeholder="맵 이름 입력..." maxlength="30">
+            <button id="inv-stage-save">저장</button>
+          </div>
+          <div id="inv-stage-list"></div>
+          <button id="inv-stage-import">파일에서 불러오기 (.json)</button>
+          <input id="inv-stage-file" type="file" accept=".json" style="display:none">
         </div>
 
         <div id="inv-desc"></div>
@@ -196,12 +253,11 @@ export class Toolbar {
   }
 
   _setupInventory() {
-    const overlay  = document.getElementById('inventory-overlay');
+    const overlay = document.getElementById('inventory-overlay');
     const ballGrid = document.getElementById('inv-ball-grid');
-    const lineRow  = document.getElementById('inv-line-row');
-    const descEl   = document.getElementById('inv-desc');
+    const lineRow = document.getElementById('inv-line-row');
+    const descEl = document.getElementById('inv-desc');
     const closeBtn = document.getElementById('inv-close');
-    const bgmToggle = document.getElementById('inv-bgm-toggle');
 
     // ── Ball items ──────────────────────────────────────────────────────────
     for (const [key, def] of Object.entries(BALL_TYPES)) {
@@ -239,7 +295,10 @@ export class Toolbar {
     // ── Line color items ────────────────────────────────────────────────────
     for (const lc of LINE_COLORS) {
       const item = document.createElement('div');
-      item.className = 'inv-line-item' + (lc.color === this._color ? ' selected' : '');
+      const isSelected = lc.color === this._color
+        && lc.rotating === this._lineRotating
+        && lc.moving === this._lineMoving;
+      item.className = 'inv-line-item' + (isSelected ? ' selected' : '');
       item.dataset.color = lc.color;
 
       const preview = document.createElement('div');
@@ -257,6 +316,7 @@ export class Toolbar {
         lineRow.querySelectorAll('.inv-line-item').forEach(i => i.classList.remove('selected'));
         item.classList.add('selected');
         this._color = lc.color;
+        this._lineType = lc.type;
         this._lineRotating = lc.rotating;
         this._lineMoving = lc.moving;
         descEl.textContent = lc.desc;
@@ -266,29 +326,163 @@ export class Toolbar {
       lineRow.appendChild(item);
     }
 
-    // ── BGM toggle ──────────────────────────────────────────────────────────
-    const updateBgmBtn = () => {
-      if (this._sound && this._sound.bgmPlaying) {
-        bgmToggle.textContent = 'ON';
-        bgmToggle.classList.add('on');
-      } else {
-        bgmToggle.textContent = 'OFF';
-        bgmToggle.classList.remove('on');
-      }
-    };
-    bgmToggle.addEventListener('click', () => {
-      if (this._sound) this._sound.toggleBGM();
-      updateBgmBtn();
-    });
-
     // M key shortcut (outside inventory too)
     document.addEventListener('keydown', (e) => {
       if (e.code === 'KeyM' && e.target === document.body) {
         e.preventDefault();
         if (this._sound) this._sound.toggleBGM();
-        updateBgmBtn();
       }
     });
+
+    // ── Stage map save/load ────────────────────────────────────────────────
+    const stageNameInput = document.getElementById('inv-stage-name');
+    const stageSaveBtn = document.getElementById('inv-stage-save');
+    const stageListEl = document.getElementById('inv-stage-list');
+
+    this._refreshStageList = async () => {
+      stageListEl.innerHTML = '<div style="color:#555;font-size:12px;text-align:center;padding:8px;">로딩 중...</div>';
+
+      // Merge default stages (from JSON files) + user stages (from localStorage)
+      const userStages = getSavedStages();
+      const defaultStages = await loadDefaultStages().catch(() => []);
+      const progress = getStageProgress();
+
+      // Build unified list: { name, data, source: 'default'|'user', locked }
+      const merged = {};
+      for (const ds of defaultStages) {
+        const isLocked = (ds.data.level || 0) > progress + 1;
+        merged[ds.name] = { data: ds.data, source: 'default', locked: isLocked, _filename: ds._filename };
+      }
+      for (const [name, s] of Object.entries(userStages)) {
+        // User-saved stages always override defaults (e.g. Ctrl+S edits)
+        merged[name] = { data: s.data, source: 'user', locked: false };
+      }
+
+      const names = Object.keys(merged).sort((a, b) => {
+        const la = merged[a].data?.level ?? 999;
+        const lb = merged[b].data?.level ?? 999;
+        return la !== lb ? la - lb : a.localeCompare(b);
+      });
+
+      stageListEl.innerHTML = '';
+      if (names.length === 0) {
+        stageListEl.innerHTML = '<div style="color:#555;font-size:12px;text-align:center;padding:8px;">저장된 맵이 없습니다</div>';
+        return;
+      }
+      for (const name of names) {
+        const stageInfo = merged[name];
+        const entry = document.createElement('div');
+        entry.className = 'inv-stage-entry';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'inv-stage-entry-name';
+        nameSpan.textContent = stageInfo.locked ? '\uD83D\uDD12 ' + name : name;
+        if (stageInfo.locked) nameSpan.style.color = '#555';
+
+        const btnsDiv = document.createElement('div');
+        btnsDiv.className = 'inv-stage-entry-btns';
+
+        const loadBtn = document.createElement('button');
+        loadBtn.className = 'load-btn';
+        loadBtn.textContent = '불러오기';
+        if (stageInfo.locked) {
+          loadBtn.disabled = true;
+          loadBtn.style.opacity = '0.3';
+        }
+        loadBtn.addEventListener('click', () => {
+          if (stageInfo.locked) return;
+          this._world.loadStage(stageInfo.data);
+          this._loadedStageName = name;
+          this._loadedStageFilename = stageInfo._filename || null;
+          this._closeInventory();
+        });
+
+        const exportBtn = document.createElement('button');
+        exportBtn.className = 'export-btn';
+        exportBtn.textContent = '내보내기';
+        exportBtn.addEventListener('click', () => {
+          const json = JSON.stringify(stageInfo.data, null, 2);
+          const blob = new Blob([json], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${name}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+          descEl.textContent = `"${name}" 맵을 파일로 내보냈습니다.`;
+        });
+
+        // Only show delete for user-created stages
+        const delBtn = document.createElement('button');
+        delBtn.className = 'del-btn';
+        delBtn.textContent = '삭제';
+        if (stageInfo.source === 'default') {
+          delBtn.disabled = true;
+          delBtn.style.opacity = '0.3';
+        }
+        delBtn.addEventListener('click', () => {
+          if (stageInfo.source === 'default') return;
+          deleteStage(name);
+          this._refreshStageList();
+          descEl.textContent = `"${name}" 맵이 삭제되었습니다.`;
+        });
+
+        btnsDiv.appendChild(loadBtn);
+        btnsDiv.appendChild(exportBtn);
+        btnsDiv.appendChild(delBtn);
+        entry.appendChild(nameSpan);
+        entry.appendChild(btnsDiv);
+        stageListEl.appendChild(entry);
+      }
+    };
+
+    stageSaveBtn.addEventListener('click', () => {
+      const name = stageNameInput.value.trim();
+      if (!name) { descEl.textContent = '맵 이름을 입력해주세요.'; return; }
+      const data = this._world.serializeStage();
+      saveStage(name, data);
+      this._loadedStageName = name;
+      stageNameInput.value = '';
+      this._refreshStageList();
+      descEl.textContent = `"${name}" 맵이 저장되었습니다.`;
+    });
+
+    stageNameInput.addEventListener('keydown', (e) => {
+      if (e.code === 'Enter') stageSaveBtn.click();
+      e.stopPropagation();
+    });
+    stageNameInput.addEventListener('keyup', (e) => e.stopPropagation());
+
+    // ── File import ──
+    const stageImportBtn = document.getElementById('inv-stage-import');
+    const stageFileInput = document.getElementById('inv-stage-file');
+
+    stageImportBtn.addEventListener('click', () => stageFileInput.click());
+    stageFileInput.addEventListener('change', () => {
+      const file = stageFileInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (!data.version || !data.lines) {
+            descEl.textContent = '유효하지 않은 맵 파일입니다.';
+            return;
+          }
+          const name = file.name.replace(/\.json$/i, '');
+          saveStage(name, data);
+          this._loadedStageName = name;
+          this._refreshStageList();
+          descEl.textContent = `"${name}" 맵을 파일에서 가져왔습니다.`;
+        } catch {
+          descEl.textContent = '파일을 읽는 중 오류가 발생했습니다.';
+        }
+        stageFileInput.value = '';
+      };
+      reader.readAsText(file);
+    });
+
+    this._refreshStageList();
 
     // ── Initial desc ────────────────────────────────────────────────────────
     descEl.textContent = BALL_TYPES[this._selectedBallType].desc;
@@ -305,19 +499,7 @@ export class Toolbar {
         e.preventDefault();
         this._inventoryOpen ? this._closeInventory() : this._openInventory();
       }
-      if (e.code === 'Escape') {
-        if (this._launchBall) {
-          e.preventDefault();
-          this._cancelLaunchTimer();
-          const ball = this._launchBall;
-          this._launchBall = this._launchStart = this._launchCurrent = null;
-          this._world.unfreezeBody(ball);
-          this._world.removeBody(ball);
-        } else if (this._inventoryOpen) {
-          e.preventDefault();
-          this._closeInventory();
-        }
-      }
+      // ESC is now handled centrally via handleEscape() called from main.js
       if (e.code === 'KeyQ' && e.target === document.body) {
         e.preventDefault();
         this._powerMode = !this._powerMode;
@@ -328,6 +510,11 @@ export class Toolbar {
   _openInventory() {
     this._inventoryOpen = true;
     document.getElementById('inventory-overlay').classList.remove('hidden');
+    // In play/test mode, show only line types
+    const playOnly = this._playModeOnly;
+    document.querySelector('.inv-section-lines').style.display = playOnly ? 'none' : '';
+    document.querySelector('.inv-section-stages').style.display = playOnly ? 'none' : '';
+    if (!playOnly && this._refreshStageList) this._refreshStageList();
   }
 
   _closeInventory() {
@@ -335,13 +522,79 @@ export class Toolbar {
     document.getElementById('inventory-overlay').classList.add('hidden');
   }
 
+  // ── Public Enter handler (called from main.js) ────────────────────────────────
+  handleEnter() {
+    if (this._launchBall) {
+      this._cancelLaunchTimer();
+      const ball = this._launchBall;
+      this._launchBall = this._launchStart = this._launchCurrent = null;
+      this._world.unfreezeBody(ball);
+      this._world.removeBody(ball);
+      return true;
+    }
+    if (this._inventoryOpen) {
+      this._closeInventory();
+      return true;
+    }
+    return false;
+  }
+
+  // ── Quick save (Ctrl+S) ────────────────────────────────────────────────────
+  /** Save current stage to public/stages/ file. Returns {name, promise}. */
+  quickSave() {
+    if (!this._loadedStageName) return null;
+    const data = this._world.serializeStage();
+    const filename = this._loadedStageFilename;
+    if (!filename) return null;
+
+    const fileContent = { name: this._loadedStageName, data };
+    const promise = fetch('/__api/save-stage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, content: fileContent }),
+    }).then(res => {
+      if (!res.ok) throw new Error('Save failed');
+      return res.json();
+    });
+
+    return { name: this._loadedStageName, promise };
+  }
+
+  get loadedStageName() { return this._loadedStageName; }
+
+  // ── Wall editing helpers ──────────────────────────────────────────────────
+
+  _findNearestEndpoint(pos) {
+    const THRESHOLD = 15;
+    let best = null;
+    for (const group of this._world.lineGroups) {
+      for (let i = 0; i < group.points.length; i++) {
+        const p = group.points[i];
+        const d = Math.hypot(pos.x - p.x, pos.y - p.y);
+        if (d < THRESHOLD && (!best || d < best.distance)) {
+          best = { lineGroup: group, pointIndex: i, distance: d };
+        }
+      }
+    }
+    return best;
+  }
+
+  _findWallBodyAtPoint(pos) {
+    const body = this._world.findBodyAtPoint(pos.x, pos.y);
+    if (body && body._type === 'line') {
+      const lineGroup = this._world.findLineGroupByBodyId(body.id);
+      return lineGroup || null;
+    }
+    return null;
+  }
+
   // ── Canvas input ────────────────────────────────────────────────────────────
 
   _setupCanvas() {
     this._canvas.addEventListener('pointerdown', (e) => this._onPointerDown(e));
     this._canvas.addEventListener('pointermove', (e) => this._onPointerMove(e));
-    this._canvas.addEventListener('pointerup',   (e) => this._onPointerUp(e));
-    this._canvas.addEventListener('pointerleave',(e) => this._onPointerUp(e));
+    this._canvas.addEventListener('pointerup', (e) => this._onPointerUp(e));
+    this._canvas.addEventListener('pointerleave', (e) => this._onPointerUp(e));
   }
 
   _getCanvasPos(e) {
@@ -350,10 +603,11 @@ export class Toolbar {
   }
 
   _onPointerDown(e) {
+    if (!this._inputEnabled) return;
     if (this._inventoryOpen) return;
     const pos = this._getCanvasPos(e);
 
-    if (e.ctrlKey) {
+    if (e.ctrlKey && !this._playModeOnly) {
       const body = this._world.findBodyAtPoint(pos.x, pos.y);
       if (body) {
         this._dragging = body;
@@ -363,15 +617,20 @@ export class Toolbar {
       }
     }
 
+    // In play/test mode, only allow ball launching
+    if (this._playModeOnly && this._tool !== 'ball') return;
+
     switch (this._tool) {
       case 'ball': {
+        // Check ball limit
+        if (this._world.ballsRemaining <= 0) break;
         const launcher = this._world.launcher;
         const spawnPos = launcher
           ? { x: launcher.position.x, y: launcher.position.y }
           : pos;
         const ball = this._world.addBall(spawnPos.x, spawnPos.y, this._selectedBallType);
-        this._launchBall    = ball;
-        this._launchStart   = spawnPos;
+        this._launchBall = ball;
+        this._launchStart = spawnPos;
         this._launchCurrent = pos;
         this._world.freezeBody(ball);
         this._canvas.setPointerCapture(e.pointerId);
@@ -379,10 +638,34 @@ export class Toolbar {
         this._startLaunchTimer(launcher);
         break;
       }
-      case 'wall':
+      case 'wall': {
+        // In sandbox mode, check for wall editing first
+        if (!this._playModeOnly) {
+          // 1. Endpoint drag?
+          const ep = this._findNearestEndpoint(pos);
+          if (ep) {
+            this._editingLineGroup = ep.lineGroup;
+            this._editMode = 'endpoint';
+            this._editPointIndex = ep.pointIndex;
+            this._editLastPos = pos;
+            this._canvas.setPointerCapture(e.pointerId);
+            break;
+          }
+          // 2. Wall body drag?
+          const wallGroup = this._findWallBodyAtPoint(pos);
+          if (wallGroup) {
+            this._editingLineGroup = wallGroup;
+            this._editMode = 'move';
+            this._editLastPos = pos;
+            this._canvas.setPointerCapture(e.pointerId);
+            break;
+          }
+        }
+        // 3. Draw new wall
         this._drawing = true;
-        this._currentPath = [pos];
+        this._currentPath = [pos, pos];
         break;
+      }
       case 'eraser':
         this._world.removeBodyAtPoint(pos.x, pos.y);
         break;
@@ -404,8 +687,8 @@ export class Toolbar {
           if (ldx * ldx + ldy * ldy < 30 * 30) {
             // Click on launcher → spawn ball and start slingshot aiming
             const ball = this._world.addBall(launcher.position.x, launcher.position.y, this._selectedBallType);
-            this._launchBall    = ball;
-            this._launchStart   = { x: launcher.position.x, y: launcher.position.y };
+            this._launchBall = ball;
+            this._launchStart = { x: launcher.position.x, y: launcher.position.y };
             this._launchCurrent = pos;
             this._world.freezeBody(ball);
             this._canvas.setPointerCapture(e.pointerId);
@@ -421,6 +704,7 @@ export class Toolbar {
   }
 
   _onPointerMove(e) {
+    if (!this._inputEnabled) return;
     const pos = this._getCanvasPos(e);
     this._hoverPos = pos;
 
@@ -432,26 +716,46 @@ export class Toolbar {
       this._world.moveBody(this._dragging, pos.x - this._dragOffset.x, pos.y - this._dragOffset.y);
       return;
     }
+    // Wall editing drag
+    if (this._editingLineGroup) {
+      if (this._editMode === 'move') {
+        const dx = pos.x - this._editLastPos.x;
+        const dy = pos.y - this._editLastPos.y;
+        this._world.moveLineGroup(this._editingLineGroup, dx, dy);
+        this._editLastPos = pos;
+      } else if (this._editMode === 'endpoint') {
+        const pts = this._editingLineGroup.points.map(p => ({ x: p.x, y: p.y }));
+        pts[this._editPointIndex] = { x: pos.x, y: pos.y };
+        // Enforce minimum length
+        const other = pts[1 - this._editPointIndex];
+        if (Math.hypot(pos.x - other.x, pos.y - other.y) > 5) {
+          this._world.updateLineGroupPoints(this._editingLineGroup, pts);
+        }
+      }
+      return;
+    }
     if (!this._drawing || this._tool !== 'wall') return;
-    this._currentPath.push(pos);
+    // Update end point for straight-line preview
+    this._currentPath[1] = pos;
   }
 
   _onPointerUp(_e) {
+    if (!this._inputEnabled) return;
     if (this._launchBall) {
       this._cancelLaunchTimer();
-      const ball  = this._launchBall;
+      const ball = this._launchBall;
       const start = this._launchStart;
-      const end   = this._launchCurrent;
+      const end = this._launchCurrent;
       this._launchBall = this._launchStart = this._launchCurrent = null;
 
-      const dx   = start.x - end.x;
-      const dy   = start.y - end.y;
+      const dx = start.x - end.x;
+      const dy = start.y - end.y;
       const dist = Math.hypot(dx, dy);
 
       this._world.unfreezeBody(ball);
 
-      if (dist > 5) {
-        const speed = Math.min(dist * 0.15, 30);
+      if (dist > LAUNCH_MIN_DRAG) {
+        const speed = Math.min(dist * LAUNCH_SPEED_MULTIPLIER, LAUNCH_MAX_SPEED);
         const nx = dx / dist;
         const ny = dy / dist;
 
@@ -462,17 +766,29 @@ export class Toolbar {
 
         this._world.launchBody(ball, nx * speed, ny * speed);
         this._world.spawnLaunchEffect(ball.position.x, ball.position.y, nx, ny, speed, ball._powerBoost);
+        this._world.incrementBallsUsed();
       }
       return;
     }
 
     if (this._dragging) { this._dragging = null; return; }
+    if (this._editingLineGroup) {
+      this._editingLineGroup = null;
+      this._editMode = null;
+      this._editPointIndex = 0;
+      this._editLastPos = null;
+      return;
+    }
     if (!this._drawing) return;
     this._drawing = false;
 
     if (this._currentPath.length >= 2) {
-      const simplified = simplifyPath(this._currentPath, 3);
-      this._world.addLine(simplified, this._color, this._lineRotating, this._lineMoving);
+      const start = this._currentPath[0];
+      const end = this._currentPath[1];
+      const dist = Math.hypot(end.x - start.x, end.y - start.y);
+      if (dist > 5) { // minimum length threshold
+        this._world.addLine([start, end], this._color, this._lineRotating, this._lineMoving, this._lineType);
+      }
     }
     this._currentPath = [];
   }
@@ -484,14 +800,14 @@ export class Toolbar {
     this._launchTimer = setTimeout(() => {
       if (this._launchBall) {
         // Auto-fire with current aiming direction
-        const ball  = this._launchBall;
+        const ball = this._launchBall;
         const start = this._launchStart;
-        const end   = this._launchCurrent;
+        const end = this._launchCurrent;
         this._launchBall = this._launchStart = this._launchCurrent = null;
         this._launchTimerStart = 0;
 
-        const dx   = start.x - end.x;
-        const dy   = start.y - end.y;
+        const dx = start.x - end.x;
+        const dy = start.y - end.y;
         const dist = Math.hypot(dx, dy);
 
         this._world.unfreezeBody(ball);
@@ -505,6 +821,7 @@ export class Toolbar {
           }
           this._world.launchBody(ball, nx * speed, ny * speed);
           this._world.spawnLaunchEffect(ball.position.x, ball.position.y, nx, ny, speed, ball._powerBoost);
+          this._world.incrementBallsUsed();
         }
       }
     }, 3000);
@@ -525,21 +842,23 @@ export class Toolbar {
       case 'star':
       case 'target':
       case 'launcher': this._canvas.style.cursor = 'crosshair'; break;
-      case 'eraser':   this._canvas.style.cursor = 'pointer';   break;
-      case 'boost':    this._canvas.style.cursor = 'cell';      break;
+      case 'eraser': this._canvas.style.cursor = 'pointer'; break;
+      case 'boost': this._canvas.style.cursor = 'cell'; break;
     }
   }
 
   // ── Getters ─────────────────────────────────────────────────────────────────
 
-  get currentTool()  { return this._tool; }
+  get currentTool() { return this._tool; }
   get currentColor() { return this._color; }
-  get isDrawing()    { return this._drawing; }
-  get currentPath()  { return this._currentPath; }
-  get hoverPos()     { return this._hoverPos; }
-  get inventoryOpen(){ return this._inventoryOpen; }
+  get isDrawing() { return this._drawing; }
+  get currentPath() { return this._currentPath; }
+  get hoverPos() { return this._hoverPos; }
+  get inventoryOpen() { return this._inventoryOpen; }
   get selectedBallType() { return this._selectedBallType; }
   get powerMode() { return this._powerMode; }
+  get editingLineGroup() { return this._editingLineGroup; }
+  get playModeOnly() { return this._playModeOnly; }
 
   /** Returns 0~1 countdown ratio (1 = just started, 0 = time's up). 0 if no timer. */
   get launchTimerRatio() {
@@ -552,7 +871,7 @@ export class Toolbar {
     if (!this._launchBall || !this._launchStart || !this._launchCurrent) return null;
     return {
       ballPos: this._launchBall.position,
-      start:   this._launchStart,
+      start: this._launchStart,
       current: this._launchCurrent,
     };
   }

@@ -1,0 +1,48 @@
+{
+  "name": "1. 첫 발사",
+  "data": {
+    "version": 1,
+    "designSize": {
+      "w": 1024,
+      "h": 768
+    },
+    "level": 1,
+    "locked": false,
+    "lines": [
+      {
+        "points": [
+          {
+            "x": 64,
+            "y": 645
+          },
+          {
+            "x": 960,
+            "y": 645
+          }
+        ],
+        "color": "#333333",
+        "rotating": false,
+        "moving": false,
+        "type": "ground"
+      }
+    ],
+    "balls": [],
+    "stars": [
+      {
+        "x": 512,
+        "y": 584
+      }
+    ],
+    "targets": [
+      {
+        "x": 832,
+        "y": 599
+      }
+    ],
+    "launcher": {
+      "x": 154,
+      "y": 584
+    },
+    "maxBalls": 5
+  }
+}

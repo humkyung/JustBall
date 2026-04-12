@@ -1,0 +1,84 @@
+{
+  "name": "5. 틈새 공략",
+  "data": {
+    "version": 1,
+    "designSize": {
+      "w": 1024,
+      "h": 768
+    },
+    "level": 5,
+    "locked": true,
+    "lines": [
+      {
+        "points": [
+          {
+            "x": 64,
+            "y": 691
+          },
+          {
+            "x": 960,
+            "y": 691
+          }
+        ],
+        "color": "#333333",
+        "rotating": false,
+        "moving": false,
+        "type": "ground"
+      },
+      {
+        "points": [
+          {
+            "x": 486,
+            "y": 154
+          },
+          {
+            "x": 486,
+            "y": 430
+          }
+        ],
+        "color": "#808080",
+        "rotating": false,
+        "moving": false,
+        "type": "ironwall"
+      },
+      {
+        "points": [
+          {
+            "x": 486,
+            "y": 507
+          },
+          {
+            "x": 486,
+            "y": 691
+          }
+        ],
+        "color": "#808080",
+        "rotating": false,
+        "moving": false,
+        "type": "ironwall"
+      }
+    ],
+    "balls": [],
+    "stars": [
+      {
+        "x": 384,
+        "y": 461
+      },
+      {
+        "x": 704,
+        "y": 538
+      }
+    ],
+    "targets": [
+      {
+        "x": 768,
+        "y": 645
+      }
+    ],
+    "launcher": {
+      "x": 128,
+      "y": 630
+    },
+    "maxBalls": 4
+  }
+}

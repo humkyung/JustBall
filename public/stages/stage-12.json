@@ -1,0 +1,33 @@
+{
+  "name": "12. 반사의 달인",
+  "data": {
+    "version": 1,
+    "designSize": { "w": 1024, "h": 768 },
+    "level": 12,
+    "locked": false,
+    "maxBalls": 4,
+    "lines": [
+      { "points": [{"x":64,"y":710},{"x":960,"y":710}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":300,"y":300},{"x":300,"y":710}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":300,"y":300},{"x":500,"y":300}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":500,"y":300},{"x":500,"y":550}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":200,"y":550},{"x":280,"y":450}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":350,"y":250},{"x":450,"y":180}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":550,"y":350},{"x":620,"y":250}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":700,"y":200},{"x":780,"y":300}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":850,"y":400},{"x":900,"y":500}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":650,"y":550},{"x":900,"y":550}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false }
+    ],
+    "balls": [],
+    "stars": [
+      {"x": 250, "y": 480},
+      {"x": 580, "y": 200},
+      {"x": 750, "y": 350}
+    ],
+    "targets": [
+      {"x": 400, "y": 660},
+      {"x": 780, "y": 660}
+    ],
+    "launcher": {"x": 120, "y": 650}
+  }
+}

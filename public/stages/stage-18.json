@@ -1,0 +1,33 @@
+{
+  "name": "18. 무중력 통로",
+  "data": {
+    "version": 1,
+    "designSize": { "w": 1024, "h": 768 },
+    "level": 18,
+    "locked": true,
+    "maxBalls": 3,
+    "lines": [
+      { "points": [{"x":64,"y":710},{"x":960,"y":710}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":250,"y":580},{"x":500,"y":580}], "color": "#333333", "type": "ground", "rotating": false, "moving": true },
+      { "points": [{"x":550,"y":430},{"x":800,"y":430}], "color": "#333333", "type": "ground", "rotating": false, "moving": true },
+      { "points": [{"x":250,"y":280},{"x":500,"y":280}], "color": "#333333", "type": "ground", "rotating": false, "moving": true },
+      { "points": [{"x":600,"y":150},{"x":850,"y":150}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":180,"y":650},{"x":230,"y":560}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":520,"y":520},{"x":570,"y":420}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":300,"y":370},{"x":250,"y":270}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":520,"y":220},{"x":580,"y":140}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":64,"y":100},{"x":64,"y":710}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":960,"y":100},{"x":960,"y":710}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false }
+    ],
+    "balls": [],
+    "stars": [
+      {"x": 400, "y": 540},
+      {"x": 650, "y": 390}
+    ],
+    "targets": [
+      {"x": 400, "y": 240},
+      {"x": 750, "y": 120}
+    ],
+    "launcher": {"x": 120, "y": 650}
+  }
+}

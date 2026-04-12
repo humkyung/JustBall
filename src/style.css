@@ -102,6 +102,91 @@ body {
   cursor: crosshair;
 }
 
+/* ── Lobby overlay ───────────────────────────────────────────────────────── */
+
+#lobby-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  backdrop-filter: blur(6px);
+}
+
+#lobby-overlay.hidden {
+  display: none;
+}
+
+#lobby-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.lobby-title {
+  color: #ffd700;
+  font-size: 64px;
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 8px;
+  text-shadow: 0 0 30px rgba(255, 215, 0, 0.5);
+}
+
+.lobby-subtitle {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 16px;
+  margin-bottom: 40px;
+}
+
+.lobby-buttons {
+  display: flex;
+  gap: 24px;
+}
+
+.lobby-btn {
+  padding: 16px 48px;
+  border: 2px solid #7b68ee;
+  border-radius: 12px;
+  background: #533483;
+  color: #fff;
+  font-size: 20px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.lobby-btn:hover {
+  background: #7b68ee;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(123, 104, 238, 0.4);
+}
+
+/* ── Test mode button ────────────────────────────────────────────────────── */
+
+#test-mode-btn {
+  padding: 8px 16px;
+  border: 2px solid #2e7d32;
+  border-radius: 6px;
+  background: transparent;
+  color: #4caf50;
+  cursor: pointer;
+  font-size: 14px;
+  margin-left: 8px;
+}
+
+#test-mode-btn:hover {
+  background: #2e7d32;
+  color: #fff;
+}
+
+#test-mode-btn.hidden {
+  display: none;
+}
+
+/* ── Status ──────────────────────────────────────────────────────────────── */
+
 #status {
   position: fixed;
   bottom: 8px;

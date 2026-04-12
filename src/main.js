@@ -3,6 +3,7 @@ import { PhysicsWorld, BALL_TYPES } from './physics.js';
 import { Toolbar } from './toolbar.js';
 import { SoundSystem } from './sound.js';
 import { generateBackground } from './background.js';
+import { loadDefaultStages, getStageProgress, saveStageProgress } from './defaultStages.js';
 
 const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
@@ -24,8 +25,8 @@ targetImg.onload = () => { targetReady = true; };
 
 // Resize canvas drawing buffer to match its CSS layout size, respecting devicePixelRatio
 function resizeCanvas() {
-  const toolbar = document.getElementById('toolbar');
-  const toolbarH = toolbar.getBoundingClientRect().height || toolbar.offsetHeight;
+  const toolbarEl = document.getElementById('toolbar');
+  const toolbarH = toolbarEl.offsetHeight && toolbarEl.style.display !== 'none' ? toolbarEl.getBoundingClientRect().height : 0;
   const dpr = window.devicePixelRatio || 1;
   const cssW = window.innerWidth;
   const cssH = window.innerHeight - toolbarH;
@@ -73,31 +74,302 @@ world.onTrampolineHit = (bodyId, nx, ny, speed) => {
 // Target hit & stage clear callbacks
 let stageClearTime = 0;
 world.onTargetHit = () => { sound.playBombExplode(); };
-world.onStageClear = () => {
+
+// ── Game state machine ─────────────────────────────────────────────────────
+let gameMode = 'lobby';       // 'lobby' | 'sandbox' | 'testMode' | 'play'
+let paused = false;
+let playStageIndex = 0;
+let playStageList = [];       // [{name, data}, ...] sorted by savedAt
+let sandboxSnapshot = null;   // serialized stage for test-mode restore
+let endCheckReason = null;    // 'clear' | 'quit' | null
+let endCheckSelectedIndex = 0; // cursor position in stage grid
+let quickSaveToast = null;     // { text, time } for Ctrl+S feedback
+let testClearTimer = null;    // setTimeout id for testMode auto-return
+
+const lobbyOverlay = document.getElementById('lobby-overlay');
+const toolbarEl = document.getElementById('toolbar');
+const testModeBtn = document.getElementById('test-mode-btn');
+
+function resizeAndRegenBg() {
+  resizeCanvas();
+  bgCanvas = generateBackground(canvas.cssWidth, canvas.cssHeight, canvas.dpr || 1);
+}
+
+function setPhysicsRunning(running) {
+  if (running) {
+    Matter.Runner.run(world.runner, world.engine);
+  } else {
+    Matter.Runner.stop(world.runner);
+  }
+}
+
+function showLobby() {
+  gameMode = 'lobby';
+  endCheckReason = null;
+  stageClearTime = 0;
+  paused = false;
+  if (testClearTimer) { clearTimeout(testClearTimer); testClearTimer = null; }
+  world.clearAll();
+  world.resetScore();
+  setPhysicsRunning(false);
+  // Exit fullscreen if active
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => { });
+  }
+  lobbyOverlay.classList.remove('hidden');
+  toolbarEl.style.display = 'none';
+  toolbar._inputEnabled = false;
+  toolbar._playModeOnly = false;
+  resizeAndRegenBg();
+}
+
+function enterSandboxMode() {
+  gameMode = 'sandbox';
+  endCheckReason = null;
+  stageClearTime = 0;
+  paused = false;
+  lobbyOverlay.classList.add('hidden');
+  toolbarEl.style.display = 'flex';
+  testModeBtn.classList.remove('hidden');
+  toolbar._inputEnabled = true;
+  toolbar._playModeOnly = false;
+  world.clearAll();
+  world.resetScore();
+  setPhysicsRunning(true);
+  resizeAndRegenBg();
+}
+
+function enterTestMode() {
+  sandboxSnapshot = world.serializeStage();
+  gameMode = 'testMode';
+  stageClearTime = 0;
+  paused = false;
+  toolbarEl.style.display = 'none';
+  toolbar._inputEnabled = true;
+  toolbar._playModeOnly = true;
+  toolbar._tool = 'ball';
+  resizeAndRegenBg();
+  setPhysicsRunning(true);
+}
+
+function exitTestMode() {
+  if (testClearTimer) { clearTimeout(testClearTimer); testClearTimer = null; }
+  gameMode = 'sandbox';
+  stageClearTime = 0;
+  paused = false;
+  if (sandboxSnapshot) {
+    world.loadStage(sandboxSnapshot);
+    sandboxSnapshot = null;
+  }
+  toolbarEl.style.display = 'flex';
+  testModeBtn.classList.remove('hidden');
+  toolbar._inputEnabled = true;
+  toolbar._playModeOnly = false;
+  resizeAndRegenBg();
+  setPhysicsRunning(true);
+}
+
+async function enterPlayMode() {
+  // Load stages from JSON files
+  const entries = await loadDefaultStages();
+
+  if (entries.length === 0) {
+    const notice = document.createElement('div');
+    notice.textContent = '\uC2A4\uD14C\uC774\uC9C0\uB97C \uBD88\uB7EC\uC62C \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.';
+    notice.style.cssText = 'position:fixed;top:20%;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#ffd700;padding:16px 32px;border-radius:8px;font-size:16px;z-index:100;pointer-events:none;';
+    document.body.appendChild(notice);
+    setTimeout(() => notice.remove(), 2500);
+    return;
+  }
+
+  // Apply lock state based on progress
+  const progress = getStageProgress();
+  playStageList = entries.map(e => ({
+    name: e.name,
+    data: e.data,
+    level: e.data.level || 0,
+    locked: (e.data.level || 0) > progress + 1,
+  }));
+
+  // Find first unlocked stage to start from (or the furthest unlocked)
+  const lastIdx = playStageList.findIndex(e => e.level === progress + 1);
+  playStageIndex = lastIdx >= 0 ? lastIdx : 0;
+
+  gameMode = 'play';
+  endCheckReason = null;
+  stageClearTime = 0;
+  paused = false;
+  world.resetScore();
+  lobbyOverlay.classList.add('hidden');
+  toolbarEl.style.display = 'none';
+  testModeBtn.classList.add('hidden');
+  toolbar._inputEnabled = true;
+  toolbar._playModeOnly = true;
+  toolbar._tool = 'ball';
+
+  // Request fullscreen for play mode
+  const appEl = document.getElementById('app');
+  if (appEl.requestFullscreen && !document.fullscreenElement) {
+    appEl.requestFullscreen().catch(() => { });
+  }
+
+  resizeAndRegenBg();
+  loadPlayStage(playStageIndex);
+}
+
+function loadPlayStage(index) {
+  playStageIndex = index;
+  const entry = playStageList[playStageIndex];
+  if (entry.locked) return; // cannot play locked stages
+  world.loadStage(entry.data);
+  localStorage.setItem('justball_lastPlayedStage', entry.name);
+  endCheckReason = null;
+  stageClearTime = 0;
+  paused = false;
+  toolbar._inputEnabled = true;
+  setPhysicsRunning(true);
+}
+
+function showEndCheck(reason) {
+  endCheckReason = reason;
   stageClearTime = performance.now();
   paused = true;
-  Matter.Runner.stop(world.runner);
+  toolbar._inputEnabled = false;
+  setPhysicsRunning(false);
+
+  // Save progress immediately on clear so grid renders correct state
+  if (reason === 'clear') {
+    const clearedLevel = playStageList[playStageIndex].level || 0;
+    saveStageProgress(clearedLevel);
+    // Unlock next stage
+    if (playStageIndex + 1 < playStageList.length) {
+      playStageList[playStageIndex + 1].locked = false;
+    }
+  }
+
+  // Set cursor: next unlocked stage on clear, current on quit
+  if (reason === 'clear' && playStageIndex + 1 < playStageList.length) {
+    endCheckSelectedIndex = playStageIndex + 1;
+  } else {
+    endCheckSelectedIndex = playStageIndex;
+  }
+}
+
+// Stage clear callback — mode-aware
+world.onStageClear = () => {
+  if (gameMode === 'play') {
+    showEndCheck('clear');
+  } else if (gameMode === 'testMode') {
+    stageClearTime = performance.now();
+    paused = true;
+    setPhysicsRunning(false);
+    testClearTimer = setTimeout(() => exitTestMode(), 1500);
+  }
 };
 
-// Spacebar pause / resume
-let paused = false;
+// Balls exhausted — stage failed (no unlock)
+world.onBallsExhausted = () => {
+  if (gameMode === 'play') {
+    showEndCheck('exhaust');
+  }
+};
 
+// ── Lobby button bindings ──────────────────────────────────────────────────
+document.getElementById('btn-play-mode').addEventListener('click', enterPlayMode);
+document.getElementById('btn-sandbox-mode').addEventListener('click', enterSandboxMode);
+testModeBtn.addEventListener('click', () => {
+  if (gameMode === 'sandbox') enterTestMode();
+});
+
+// ── Initial state: show lobby, hide toolbar ────────────────────────────────
+toolbarEl.style.display = 'none';
+toolbar._inputEnabled = false;
+
+// ── Keyboard input ─────────────────────────────────────────────────────────
 document.addEventListener('keydown', (e) => {
+  // Ctrl+S: quick save in sandbox mode
+  if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
+    e.preventDefault();
+    if (gameMode === 'sandbox') {
+      const result = toolbar.quickSave();
+      if (result) {
+        quickSaveToast = { text: `"${result.name}" 저장 중...`, time: performance.now() };
+        result.promise.then(() => {
+          quickSaveToast = { text: `"${result.name}" 파일 저장 완료`, time: performance.now() };
+        }).catch(() => {
+          quickSaveToast = { text: '파일 저장 실패 (개발 서버 확인)', time: performance.now() };
+        });
+      } else {
+        quickSaveToast = { text: '먼저 인벤토리에서 스테이지를 불러오세요', time: performance.now() };
+      }
+    }
+    return;
+  }
+
+  // ESC handling
+  if (e.code === 'Escape') {
+    e.preventDefault();
+    if (gameMode === 'play' && endCheckReason) { showLobby(); return; }
+    return;
+  }
+
+  if (e.code === 'Enter') {
+    e.preventDefault();
+    // Let toolbar handle first (cancel launch / close inventory)
+    if (toolbar.handleEnter()) return;
+    if (gameMode === 'sandbox') { showLobby(); return; }
+    if (gameMode === 'testMode') { exitTestMode(); return; }
+    if (gameMode === 'play' && !endCheckReason) { showEndCheck('quit'); return; }
+  }
+
+  // Space: pause toggle (sandbox / testMode only)
   if (e.code === 'Space' && e.target === document.body) {
     e.preventDefault();
-    // Stage clear state: Space resets it
-    if (stageClearTime > 0) {
-      stageClearTime = 0;
-      world.resetStageClear();
-      paused = false;
-      Matter.Runner.run(world.runner, world.engine);
+    if (gameMode === 'lobby') return;
+    if (endCheckReason) return;
+    // In sandbox or testMode, toggle pause
+    if (gameMode === 'sandbox' || gameMode === 'testMode') {
+      paused = !paused;
+      setPhysicsRunning(!paused);
+    }
+    return;
+  }
+
+  // EndCheck screen: stage grid navigation
+  if (endCheckReason && gameMode === 'play') {
+    const gridCols = 5;
+    if (e.code === 'ArrowLeft') {
+      e.preventDefault();
+      endCheckSelectedIndex = Math.max(0, endCheckSelectedIndex - 1);
       return;
     }
-    paused = !paused;
-    if (paused) {
-      Matter.Runner.stop(world.runner);
-    } else {
-      Matter.Runner.run(world.runner, world.engine);
+    if (e.code === 'ArrowRight') {
+      e.preventDefault();
+      endCheckSelectedIndex = Math.min(playStageList.length - 1, endCheckSelectedIndex + 1);
+      return;
+    }
+    if (e.code === 'ArrowUp') {
+      e.preventDefault();
+      endCheckSelectedIndex = Math.max(0, endCheckSelectedIndex - gridCols);
+      return;
+    }
+    if (e.code === 'ArrowDown') {
+      e.preventDefault();
+      endCheckSelectedIndex = Math.min(playStageList.length - 1, endCheckSelectedIndex + gridCols);
+      return;
+    }
+    if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+      e.preventDefault();
+      const selected = playStageList[endCheckSelectedIndex];
+      if (!selected.locked) {
+        loadPlayStage(endCheckSelectedIndex);
+      }
+      return;
+    }
+    if (e.code === 'KeyR') {
+      e.preventDefault();
+      loadPlayStage(playStageIndex);
+      return;
     }
   }
 });
@@ -122,24 +394,11 @@ const BALL_RADIUS = 15;
 // Generate cached background
 let bgCanvas = generateBackground(canvas.cssWidth, canvas.cssHeight, canvas.dpr || 1);
 
-const COLOR_MAP = {
-  ground: '#333333',
-  bounce: '#f5c542',
-  kill: '#e74c3c',
-};
-
-function render() {
-  const dpr = canvas.dpr || 1;
-  const W = canvas.cssWidth || canvas.width;
-  const H = canvas.cssHeight || canvas.height;
-
-  ctx.save();
-  ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, W, H);
-
-  // Draw cached background (stars, nebula, grid)
-  ctx.drawImage(bgCanvas, 0, 0, W, H);
-
+/**
+ * Render bodies: balls, lines (walls), stars, launcher, targets, and the
+ * current wall-drawing stroke.  Accesses module-scope variables via closure.
+ */
+function renderBodies(ctx, W, H) {
   // Determine hovered ball for selection ring
   const hover = toolbar.hoverPos;
   let hoveredBall = null;
@@ -405,7 +664,7 @@ function render() {
       const cy = body.position.y;
       const angle = body.angle;
       const halfLen = 600; // generous half-length to cover any segment
-      const halfH = 7.5;   // half height in local space (15px / 2)
+      const halfH = 5;     // half height in local space (LINE_THICKNESS / 2)
 
       // Draw in line-local coordinates
       ctx.translate(cx, cy);
@@ -420,9 +679,9 @@ function render() {
         // 미세 수평 그레인 (밝기 노이즈)
         const seed0 = body.id * 31;
         for (let k = 0; k < 30; k++) {
-          const gy  = -halfH + 1 + ((seed0 + k * 17) % (halfH * 2 - 2));
-          const ga  = 0.03 + ((seed0 + k * 53) % 8) / 100;
-          const gl  = 100 + ((seed0 + k * 37) % 400);
+          const gy = -halfH + 1 + ((seed0 + k * 17) % (halfH * 2 - 2));
+          const ga = 0.03 + ((seed0 + k * 53) % 8) / 100;
+          const gl = 100 + ((seed0 + k * 37) % 400);
           const gox = -halfLen + ((seed0 + k * 61) % 200);
           ctx.fillStyle = `rgba(255,255,255,${ga})`;
           ctx.fillRect(gox, gy, gl, 1);
@@ -430,9 +689,9 @@ function render() {
 
         // 상단 하이라이트 & 하단 그림자로 두께감
         const gGround = ctx.createLinearGradient(0, -halfH, 0, halfH);
-        gGround.addColorStop(0,   'rgba(255,255,255,0.10)');
+        gGround.addColorStop(0, 'rgba(255,255,255,0.10)');
         gGround.addColorStop(0.3, 'rgba(255,255,255,0.02)');
-        gGround.addColorStop(1,   'rgba(0,0,0,0.40)');
+        gGround.addColorStop(1, 'rgba(0,0,0,0.40)');
         ctx.fillStyle = gGround;
         ctx.fillRect(-halfLen, -halfH, halfLen * 2, halfH * 2);
 
@@ -461,10 +720,46 @@ function render() {
 
         // 전체 광택 오버레이
         const gBounce = ctx.createLinearGradient(0, -halfH, 0, halfH);
-        gBounce.addColorStop(0,   'rgba(255,255,200,0.20)');
+        gBounce.addColorStop(0, 'rgba(255,255,200,0.20)');
         gBounce.addColorStop(0.4, 'rgba(255,255,200,0.04)');
-        gBounce.addColorStop(1,   'rgba(0,0,0,0.25)');
+        gBounce.addColorStop(1, 'rgba(0,0,0,0.25)');
         ctx.fillStyle = gBounce;
+        ctx.fillRect(-halfLen, -halfH, halfLen * 2, halfH * 2);
+
+      } else if (label === 'ironwall') {
+        // ── 벽돌 무늬 재질 (철벽) ─────────────────────────────────────────────
+        const BRICK_W = 12;  // 벽돌 가로
+        const BRICK_H = 6;   // 벽돌 세로
+        const MORTAR = 1.2; // 줄눈 두께
+
+        // 바탕: 줄눈 색상 (어두운 회색)
+        ctx.fillStyle = '#444444';
+        ctx.fillRect(-halfLen, -halfH, halfLen * 2, halfH * 2);
+
+        // 벽돌 채우기 (엇갈림 패턴)
+        let row = 0;
+        for (let by = -halfH; by < halfH; by += BRICK_H) {
+          const offset = (row % 2 === 0) ? 0 : BRICK_W * 0.5;
+          for (let bx = -halfLen - BRICK_W; bx < halfLen + BRICK_W; bx += BRICK_W) {
+            const x = bx + offset;
+            // 벽돌마다 약간 다른 밝기
+            const seedB = body.id * 31 + row * 17 + Math.floor((bx + halfLen) / BRICK_W) * 7;
+            const bright = 90 + (seedB * 1664525 + 1013904223 & 0x7fffffff) % 40;
+            ctx.fillStyle = `rgb(${bright},${bright},${Math.floor(bright * 0.9)})`;
+            ctx.fillRect(
+              x + MORTAR, by + MORTAR,
+              BRICK_W - MORTAR * 2, BRICK_H - MORTAR * 2
+            );
+          }
+          row++;
+        }
+
+        // 상단 하이라이트 + 하단 그림자
+        const gIron = ctx.createLinearGradient(0, -halfH, 0, halfH);
+        gIron.addColorStop(0, 'rgba(255,255,255,0.12)');
+        gIron.addColorStop(0.3, 'rgba(255,255,255,0.03)');
+        gIron.addColorStop(1, 'rgba(0,0,0,0.30)');
+        ctx.fillStyle = gIron;
         ctx.fillRect(-halfLen, -halfH, halfLen * 2, halfH * 2);
 
       } else if (label === 'kill') {
@@ -475,9 +770,9 @@ function render() {
 
         // 중간 레이어: 어두운 빨강
         const gKill = ctx.createLinearGradient(0, -halfH, 0, halfH);
-        gKill.addColorStop(0,   '#8b1a15');
-        gKill.addColorStop(0.45,'#7a1210');
-        gKill.addColorStop(1,   '#4a0806');
+        gKill.addColorStop(0, '#8b1a15');
+        gKill.addColorStop(0.45, '#7a1210');
+        gKill.addColorStop(1, '#4a0806');
         ctx.fillStyle = gKill;
         ctx.fillRect(-halfLen, -halfH, halfLen * 2, halfH * 2);
 
@@ -491,7 +786,7 @@ function render() {
         for (let k = 0; k < numCracks; k++) {
           pts.push({
             x: -halfLen + rk(k * 3 + 1) * halfLen * 2,
-            y: -halfH   + rk(k * 3 + 2) * halfH * 2,
+            y: -halfH + rk(k * 3 + 2) * halfH * 2,
           });
         }
 
@@ -704,7 +999,7 @@ function render() {
         const t = now / 1000;
         // Horizontal skew oscillation — pivot at bottom center so flag area flutters
         const skew = Math.sin(t * 3.5 + body.id) * 0.04
-                   + Math.sin(t * 5.2 + body.id + 1.2) * 0.02;
+          + Math.sin(t * 5.2 + body.id + 1.2) * 0.02;
         ctx.save();
         ctx.translate(tx, ty + floatY + targetH / 2); // pivot at bottom
         ctx.transform(1, 0, skew, 1, 0, 0); // horizontal skew
@@ -728,21 +1023,51 @@ function render() {
     }
   }
 
-  // Draw current wall stroke in progress
-  if (toolbar.isDrawing && toolbar.currentPath.length > 1) {
-    const path = toolbar.currentPath;
-    ctx.beginPath();
-    ctx.moveTo(path[0].x, path[0].y);
-    for (let i = 1; i < path.length; i++) {
-      ctx.lineTo(path[i].x, path[i].y);
+  // Draw wall endpoint handles in sandbox mode when wall tool is active
+  if (toolbar.currentTool === 'wall' && !toolbar.playModeOnly && gameMode === 'sandbox') {
+    const editing = toolbar.editingLineGroup;
+    for (const group of world.lineGroups) {
+      const isEditing = group === editing;
+      const r = isEditing ? 8 : 5;
+      const fillColor = isEditing ? '#ffd700' : 'rgba(255,255,255,0.8)';
+      const strokeColor = isEditing ? '#ff8c00' : 'rgba(100,100,100,0.6)';
+      for (const pt of group.points) {
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
     }
+  }
+
+  // Draw current wall line in progress (straight line preview)
+  if (toolbar.isDrawing && toolbar.currentPath.length === 2) {
+    const [start, end] = toolbar.currentPath;
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
     ctx.strokeStyle = toolbar.currentColor;
     ctx.lineWidth = 10;
     ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
     ctx.stroke();
+    // Draw endpoint circles for visual feedback
+    for (const pt of [start, end]) {
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = toolbar.currentColor;
+      ctx.fill();
+    }
   }
+}
 
+/**
+ * Render effects: launcher countdown timer, slingshot aiming guide with
+ * trajectory prediction, explosion particles, launch trails, and impact sparks.
+ */
+function renderEffects(ctx, W, H) {
   // Draw launcher countdown timer arc
   const timerRatio = toolbar.launchTimerRatio;
   if (timerRatio > 0 && world.launcher) {
@@ -942,7 +1267,13 @@ function render() {
     }
   }
   ctx.globalAlpha = 1;
+}
 
+/**
+ * Render particle systems: debris, fire trails, plasma arcs, star collection
+ * effects, and target explosion effects.
+ */
+function renderParticles(ctx) {
   // Update and draw debris particles
   world.updateDebris();
   for (const p of world.debris) {
@@ -979,8 +1310,8 @@ function render() {
     }
     const size = p.size * p.life;
     const grd = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, size);
-    grd.addColorStop(0,   `rgba(${r},${g},${b},${p.life * 0.9})`);
-    grd.addColorStop(1,   `rgba(${r},${g},${b},0)`);
+    grd.addColorStop(0, `rgba(${r},${g},${b},${p.life * 0.9})`);
+    grd.addColorStop(1, `rgba(${r},${g},${b},0)`);
     ctx.beginPath();
     ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
     ctx.fillStyle = grd;
@@ -1078,7 +1409,13 @@ function render() {
   }
   ctx.restore();
   ctx.globalAlpha = 1;
+}
 
+/**
+ * Render UI overlays: score display, power mode indicator, score popups,
+ * stage-clear screen, pause overlay, and the status bar text.
+ */
+function renderUI(ctx, W, H) {
   // Score UI (top-left)
   if (world.score > 0 || scorePopups.length > 0) {
     ctx.fillStyle = '#ffd700';
@@ -1108,54 +1445,197 @@ function render() {
     ctx.globalAlpha = 1;
   }
 
-  // Stage clear overlay
+  // Balls remaining (top-left, below score)
+  if (world.maxBalls > 0) {
+    const remaining = world.ballsRemaining;
+    const ballY = (world.score > 0 || scorePopups.length > 0) ? 38 : 12;
+    ctx.fillStyle = remaining > 0 ? '#42a5f5' : '#ef5350';
+    ctx.font = 'bold 16px "Segoe UI", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`\u26AA ${remaining} / ${world.maxBalls}`, 12, ballY);
+  }
+
+  // Stage clear / end-check overlays (mode-aware)
   if (stageClearTime > 0) {
     const elapsed = (performance.now() - stageClearTime) / 1000;
     ctx.fillStyle = `rgba(0,0,0,${Math.min(0.55, elapsed * 1.5)})`;
     ctx.fillRect(0, 0, W, H);
 
-    // Pulsing scale on text
-    const pulse = 1 + Math.sin(elapsed * 3) * 0.04;
-    ctx.save();
-    ctx.translate(W / 2, H / 2);
-    ctx.scale(pulse, pulse);
+    if (gameMode === 'play' && endCheckReason) {
+      // ── Play mode end-check: title ─────────────────────────────────────
+      const title = endCheckReason === 'clear' ? 'STAGE CLEAR!'
+        : endCheckReason === 'exhaust' ? '\uACF5\uC774 \uBD80\uC871\uD569\uB2C8\uB2E4!'
+          : '\uC2A4\uD14C\uC774\uC9C0 \uC885\uB8CC';
+      const titleColor = endCheckReason === 'clear' ? '#ffd700'
+        : endCheckReason === 'exhaust' ? '#ef5350'
+          : '#ffffff';
+      const shadowColor = endCheckReason === 'clear' ? '#ff8800'
+        : endCheckReason === 'exhaust' ? '#b71c1c'
+          : '#666666';
+      const titleY = Math.min(H * 0.18, 120);
 
-    // Gold title
-    ctx.fillStyle = '#ffd700';
-    ctx.font = 'bold 56px "Segoe UI", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.shadowColor = '#ff8800';
-    ctx.shadowBlur = 20;
-    ctx.fillText('STAGE CLEAR!', 0, 0);
-    ctx.shadowBlur = 0;
+      const pulse = 1 + Math.sin(elapsed * 3) * 0.04;
+      ctx.save();
+      ctx.translate(W / 2, titleY);
+      ctx.scale(pulse, pulse);
+      ctx.fillStyle = titleColor;
+      ctx.font = 'bold 48px "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor = shadowColor;
+      ctx.shadowBlur = 20;
+      ctx.fillText(title, 0, 0);
+      ctx.shadowBlur = 0;
+      ctx.restore();
 
-    // Subtitle
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.font = '18px "Segoe UI", sans-serif';
-    ctx.fillText('Press Space to continue', 0, 52);
-    ctx.restore();
+      // Sparkles for clear (around title)
+      if (endCheckReason === 'clear') {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        for (let i = 0; i < 12; i++) {
+          const angle = (Math.PI * 2 * i) / 12 + elapsed * 0.5;
+          const dist = 70 + Math.sin(elapsed * 2 + i) * 25;
+          const sx = W / 2 + Math.cos(angle) * dist;
+          const sy = titleY + Math.sin(angle) * dist;
+          ctx.globalAlpha = 0.4 + Math.sin(elapsed * 4 + i * 0.8) * 0.3;
+          ctx.beginPath();
+          ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+          ctx.fillStyle = i % 2 === 0 ? '#ffd700' : '#ffffff';
+          ctx.fill();
+        }
+        ctx.restore();
+        ctx.globalAlpha = 1;
+      }
 
-    // Celebratory sparkle particles (drawn procedurally)
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    const sparkleCount = 12;
-    for (let i = 0; i < sparkleCount; i++) {
-      const angle = (Math.PI * 2 * i) / sparkleCount + elapsed * 0.5;
-      const dist = 80 + Math.sin(elapsed * 2 + i) * 30;
-      const sx = W / 2 + Math.cos(angle) * dist;
-      const sy = H / 2 + Math.sin(angle) * dist;
-      const alpha = 0.4 + Math.sin(elapsed * 4 + i * 0.8) * 0.3;
-      ctx.globalAlpha = alpha;
-      ctx.beginPath();
-      ctx.arc(sx, sy, 3, 0, Math.PI * 2);
-      ctx.fillStyle = i % 2 === 0 ? '#ffd700' : '#ffffff';
-      ctx.fill();
+      // ── Stage grid with minimap ─────────────────────────────────────
+      const progress = getStageProgress();
+      const cols = 5;
+      const boxW = 120, boxH = 100, gap = 14;
+      const rows = Math.ceil(playStageList.length / cols);
+      const gridW = cols * boxW + (cols - 1) * gap;
+      const gridStartX = (W - gridW) / 2;
+      const gridStartY = titleY + 60;
+
+      for (let i = 0; i < playStageList.length; i++) {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const x = gridStartX + col * (boxW + gap);
+        const y = gridStartY + row * (boxH + gap);
+        const stage = playStageList[i];
+        const isSelected = i === endCheckSelectedIndex;
+        const isCurrent = i === playStageIndex;
+        const isCleared = (stage.level || 0) <= progress;
+        const isLocked = stage.locked;
+
+        // Box background
+        ctx.fillStyle = isLocked ? 'rgba(40,40,40,0.85)' : isSelected ? 'rgba(255,215,0,0.15)' : 'rgba(20,20,40,0.9)';
+        ctx.beginPath();
+        ctx.roundRect(x, y, boxW, boxH, 8);
+        ctx.fill();
+
+        // Border
+        ctx.strokeStyle = isSelected ? '#ffd700' : isCurrent ? '#42a5f5' : 'rgba(255,255,255,0.15)';
+        ctx.lineWidth = isSelected ? 3 : 1;
+        ctx.stroke();
+
+        // Minimap preview (draw stage lines scaled to fit box)
+        if (!isLocked && stage.data.lines && stage.data.lines.length > 0) {
+          const ds = stage.data.designSize || { w: 1024, h: 768 };
+          const pad = 8;
+          const mapW = boxW - pad * 2;
+          const mapH = boxH - 24 - pad; // leave room for level label at top
+          const mapX = x + pad;
+          const mapY = y + 20;
+          const scX = mapW / ds.w;
+          const scY = mapH / ds.h;
+
+          ctx.save();
+          ctx.beginPath();
+          ctx.roundRect(mapX, mapY, mapW, mapH, 4);
+          ctx.clip();
+
+          for (const line of stage.data.lines) {
+            if (!line.points || line.points.length < 2) continue;
+            ctx.beginPath();
+            ctx.moveTo(mapX + line.points[0].x * scX, mapY + line.points[0].y * scY);
+            for (let p = 1; p < line.points.length; p++) {
+              ctx.lineTo(mapX + line.points[p].x * scX, mapY + line.points[p].y * scY);
+            }
+            ctx.strokeStyle = line.color || '#555';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+
+          // Draw targets as small dots
+          if (stage.data.targets) {
+            for (const t of stage.data.targets) {
+              ctx.beginPath();
+              ctx.arc(mapX + t.x * scX, mapY + t.y * scY, 3, 0, Math.PI * 2);
+              ctx.fillStyle = '#e74c3c';
+              ctx.fill();
+            }
+          }
+
+          // Draw launcher as small dot
+          if (stage.data.launcher) {
+            ctx.beginPath();
+            ctx.arc(mapX + stage.data.launcher.x * scX, mapY + stage.data.launcher.y * scY, 3, 0, Math.PI * 2);
+            ctx.fillStyle = '#aaa';
+            ctx.fill();
+          }
+
+          ctx.restore();
+        }
+
+        // Level number (top-left corner)
+        ctx.fillStyle = isLocked ? '#555' : isCleared ? '#4caf50' : '#fff';
+        ctx.font = 'bold 13px "Segoe UI", sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(String(stage.level || i + 1), x + 8, y + 5);
+
+        // Status badge (top-right corner)
+        if (isLocked) {
+          ctx.font = '14px sans-serif';
+          ctx.textAlign = 'right';
+          ctx.fillStyle = '#555';
+          ctx.fillText('\uD83D\uDD12', x + boxW - 6, y + 4);
+        } else if (isCleared) {
+          ctx.font = '12px sans-serif';
+          ctx.textAlign = 'right';
+          ctx.fillStyle = '#4caf50';
+          ctx.fillText('\u2713', x + boxW - 8, y + 5);
+        }
+      }
+
+      // Hint text
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      ctx.font = '13px "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText('\u2190 \u2192 \uC120\uD0DD  |  Enter \uD50C\uB808\uC774  |  R \uB2E4\uC2DC\uD558\uAE30  |  ESC \uB098\uAC00\uAE30', W / 2, gridStartY + rows * (boxH + gap) + 8);
+    } else if (gameMode === 'testMode') {
+      // ── Test mode brief clear ───────────────────────────────────────────
+      const pulse = 1 + Math.sin(elapsed * 3) * 0.04;
+      ctx.save();
+      ctx.translate(W / 2, H / 2);
+      ctx.scale(pulse, pulse);
+      ctx.fillStyle = '#ffd700';
+      ctx.font = 'bold 56px "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#ff8800';
+      ctx.shadowBlur = 20;
+      ctx.fillText('STAGE CLEAR!', 0, 0);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.font = '18px "Segoe UI", sans-serif';
+      ctx.fillText('\uC5D0\uB514\uD130\uB85C \uB3CC\uC544\uAC11\uB2C8\uB2E4...', 0, 52);
+      ctx.restore();
     }
-    ctx.restore();
-    ctx.globalAlpha = 1;
-  } else if (paused) {
-    // Pause overlay
+  } else if (paused && (gameMode === 'sandbox' || gameMode === 'testMode')) {
+    // Pause overlay (sandbox/testMode only)
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
     ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#fff';
@@ -1168,14 +1648,69 @@ function render() {
     ctx.fillText('Press Space to resume', W / 2, H / 2 + 52);
   }
 
-  ctx.restore();
+  // Quick-save toast
+  if (quickSaveToast) {
+    const elapsed = performance.now() - quickSaveToast.time;
+    const duration = 1500;
+    if (elapsed < duration) {
+      const alpha = elapsed < duration - 400 ? 1 : (duration - elapsed) / 400;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = 'bold 16px "Segoe UI", sans-serif';
+      const tw = ctx.measureText(quickSaveToast.text).width;
+      const px = W / 2, py = 50;
+      const pad = 12;
+      ctx.beginPath();
+      ctx.roundRect(px - tw / 2 - pad, py - 14, tw + pad * 2, 28, 6);
+      ctx.fill();
+      ctx.fillStyle = '#4ade80';
+      ctx.fillText(quickSaveToast.text, px, py);
+      ctx.restore();
+    } else {
+      quickSaveToast = null;
+    }
+  }
 
-  // Update status
-  const ballType = BALL_TYPES[toolbar.selectedBallType];
-  const scoreStr = world.score > 0 ? ` | \u2605 ${world.score}` : '';
-  const powerStr = toolbar.powerMode ? ' | POWER ON' : '';
-  const targetStr = world.targets.length > 0 ? ` | \uD83C\uDFAF ${world.targets.length}` : '';
-  statusEl.textContent = `Bodies: ${world.bodyCount} | Ball: ${ballType.name}${scoreStr}${powerStr}${targetStr}${paused ? '  |  PAUSED (Space)' : ''}`;
+  // Update status bar
+  if (gameMode === 'lobby') {
+    statusEl.textContent = '';
+  } else if (gameMode === 'play') {
+    const stageInfo = playStageList[playStageIndex] ? playStageList[playStageIndex].name : '';
+    const targetStr = world.targets.length > 0 ? ` | \uD83C\uDFAF ${world.targets.length}` : '';
+    const scoreStr = world.score > 0 ? ` | \u2605 ${world.score}` : '';
+    statusEl.textContent = `Stage: ${stageInfo} (${playStageIndex + 1}/${playStageList.length})${targetStr}${scoreStr}`;
+  } else {
+    const ballType = BALL_TYPES[toolbar.selectedBallType];
+    const scoreStr = world.score > 0 ? ` | \u2605 ${world.score}` : '';
+    const powerStr = toolbar.powerMode ? ' | POWER ON' : '';
+    const targetStr = world.targets.length > 0 ? ` | \uD83C\uDFAF ${world.targets.length}` : '';
+    const modeStr = gameMode === 'testMode' ? ' | TEST MODE' : '';
+    statusEl.textContent = `Bodies: ${world.bodyCount} | Ball: ${ballType.name}${scoreStr}${powerStr}${targetStr}${modeStr}${paused ? '  |  PAUSED (Space)' : ''}`;
+  }
+}
+
+function render() {
+  const dpr = canvas.dpr || 1;
+  const W = canvas.cssWidth || canvas.width;
+  const H = canvas.cssHeight || canvas.height;
+
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  // Draw cached background (stars, nebula, grid)
+  ctx.drawImage(bgCanvas, 0, 0, W, H);
+
+  renderBodies(ctx, W, H);
+  renderEffects(ctx, W, H);
+  renderParticles(ctx);
+  renderUI(ctx, W, H);
+
+  // Debug: expose render state
+  ctx.restore();
 
   requestAnimationFrame(render);
 }

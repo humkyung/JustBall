@@ -1,0 +1,116 @@
+{
+  "name": "9. 움직이는 요새",
+  "data": {
+    "version": 1,
+    "designSize": {
+      "w": 1024,
+      "h": 768
+    },
+    "level": 9,
+    "locked": true,
+    "lines": [
+      {
+        "points": [
+          {
+            "x": 64,
+            "y": 691
+          },
+          {
+            "x": 960,
+            "y": 691
+          }
+        ],
+        "color": "#333333",
+        "rotating": false,
+        "moving": false,
+        "type": "ground"
+      },
+      {
+        "points": [
+          {
+            "x": 614,
+            "y": 430
+          },
+          {
+            "x": 614,
+            "y": 645
+          }
+        ],
+        "color": "#333333",
+        "rotating": false,
+        "moving": true,
+        "type": "ground"
+      },
+      {
+        "points": [
+          {
+            "x": 768,
+            "y": 307
+          },
+          {
+            "x": 768,
+            "y": 522
+          }
+        ],
+        "color": "#333333",
+        "rotating": false,
+        "moving": true,
+        "type": "ground"
+      },
+      {
+        "points": [
+          {
+            "x": 576,
+            "y": 276
+          },
+          {
+            "x": 922,
+            "y": 276
+          }
+        ],
+        "color": "#808080",
+        "rotating": false,
+        "moving": false,
+        "type": "ironwall"
+      },
+      {
+        "points": [
+          {
+            "x": 358,
+            "y": 645
+          },
+          {
+            "x": 448,
+            "y": 538
+          }
+        ],
+        "color": "#f5c542",
+        "rotating": false,
+        "moving": false,
+        "type": "bounce"
+      }
+    ],
+    "balls": [],
+    "stars": [
+      {
+        "x": 448,
+        "y": 461
+      },
+      {
+        "x": 691,
+        "y": 553
+      }
+    ],
+    "targets": [
+      {
+        "x": 845,
+        "y": 568
+      }
+    ],
+    "launcher": {
+      "x": 128,
+      "y": 630
+    },
+    "maxBalls": 5
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "name": "3. 별 수집",
+  "data": {
+    "version": 1,
+    "designSize": {
+      "w": 1024,
+      "h": 768
+    },
+    "level": 3,
+    "locked": true,
+    "lines": [
+      {
+        "points": [
+          {
+            "x": 64,
+            "y": 645
+          },
+          {
+            "x": 960,
+            "y": 645
+          }
+        ],
+        "color": "#333333",
+        "rotating": false,
+        "moving": false,
+        "type": "ground"
+      },
+      {
+        "points": [
+          {
+            "x": 384,
+            "y": 522
+          },
+          {
+            "x": 576,
+            "y": 522
+          }
+        ],
+        "color": "#333333",
+        "rotating": false,
+        "moving": false,
+        "type": "ground"
+      }
+    ],
+    "balls": [],
+    "stars": [
+      {
+        "x": 320,
+        "y": 584
+      },
+      {
+        "x": 480,
+        "y": 461
+      },
+      {
+        "x": 640,
+        "y": 584
+      }
+    ],
+    "targets": [
+      {
+        "x": 870,
+        "y": 599
+      }
+    ],
+    "launcher": {
+      "x": 128,
+      "y": 584
+    },
+    "maxBalls": 5
+  }
+}

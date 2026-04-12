@@ -1,0 +1,31 @@
+{
+  "name": "13. 시간의 문",
+  "data": {
+    "version": 1,
+    "designSize": { "w": 1024, "h": 768 },
+    "level": 13,
+    "locked": false,
+    "maxBalls": 3,
+    "lines": [
+      { "points": [{"x":64,"y":710},{"x":960,"y":710}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":300,"y":200},{"x":300,"y":710}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":280,"y":350},{"x":320,"y":500}], "color": "#333333", "type": "ground", "rotating": true, "moving": false },
+      { "points": [{"x":500,"y":150},{"x":500,"y":710}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":480,"y":250},{"x":520,"y":420}], "color": "#333333", "type": "ground", "rotating": true, "moving": false },
+      { "points": [{"x":700,"y":100},{"x":700,"y":710}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":680,"y":200},{"x":720,"y":380}], "color": "#333333", "type": "ground", "rotating": true, "moving": false },
+      { "points": [{"x":200,"y":200},{"x":300,"y":200}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":400,"y":150},{"x":500,"y":150}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":600,"y":100},{"x":700,"y":100}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false }
+    ],
+    "balls": [],
+    "stars": [
+      {"x": 400, "y": 400},
+      {"x": 600, "y": 300}
+    ],
+    "targets": [
+      {"x": 850, "y": 660}
+    ],
+    "launcher": {"x": 120, "y": 650}
+  }
+}

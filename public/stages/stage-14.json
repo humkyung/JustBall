@@ -1,0 +1,34 @@
+{
+  "name": "14. 지그재그",
+  "data": {
+    "version": 1,
+    "designSize": { "w": 1024, "h": 768 },
+    "level": 14,
+    "locked": false,
+    "maxBalls": 4,
+    "lines": [
+      { "points": [{"x":64,"y":710},{"x":960,"y":710}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":64,"y":100},{"x":64,"y":710}], "color": "#e74c3c", "type": "kill", "rotating": false, "moving": false },
+      { "points": [{"x":960,"y":100},{"x":960,"y":710}], "color": "#e74c3c", "type": "kill", "rotating": false, "moving": false },
+      { "points": [{"x":64,"y":580},{"x":600,"y":580}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":400,"y":460},{"x":960,"y":460}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":64,"y":340},{"x":600,"y":340}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":400,"y":220},{"x":960,"y":220}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":600,"y":580},{"x":600,"y":640}], "color": "#e74c3c", "type": "kill", "rotating": false, "moving": false },
+      { "points": [{"x":400,"y":460},{"x":400,"y":520}], "color": "#e74c3c", "type": "kill", "rotating": false, "moving": false },
+      { "points": [{"x":600,"y":340},{"x":600,"y":400}], "color": "#e74c3c", "type": "kill", "rotating": false, "moving": false },
+      { "points": [{"x":400,"y":220},{"x":400,"y":280}], "color": "#e74c3c", "type": "kill", "rotating": false, "moving": false }
+    ],
+    "balls": [],
+    "stars": [
+      {"x": 300, "y": 540},
+      {"x": 700, "y": 420},
+      {"x": 300, "y": 300}
+    ],
+    "targets": [
+      {"x": 800, "y": 660},
+      {"x": 500, "y": 180}
+    ],
+    "launcher": {"x": 120, "y": 650}
+  }
+}

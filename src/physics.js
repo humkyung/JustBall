@@ -1,10 +1,35 @@
 import Matter from 'matter-js';
 
+// ── Game Constants ──────────────────────────────────────────────────────────
+const GRAVITY = 1.2;
+const PHYSICS_TIMESTEP = 1000 / 120;
+const POS_ITERATIONS = 12;
+const VEL_ITERATIONS = 8;
+const BLAST_RADIUS = 150;
+const MAGNET_RANGE = 200;
+const MAGNET_STRENGTH = 0.0004;
+const STAR_COLLECT_RADIUS = 33;
+const TARGET_HIT_RADIUS = 37;
+const IMPACT_DAMAGE_SPEED = 15;
+const LINE_HP = { ground: 50, bounce: 15 };
+const BOUNCY_MULT = 3.5;
+const NORMAL_BOUNCE_MULT = 2.5;
+const BOUNCY_MIN_SPEED = 20;
+const NORMAL_MIN_SPEED = 16;
+const WALL_ROTATION_SPEED = 0.008;
+const LINE_THICKNESS = 10;
+const MOVE_MAX_AMPLITUDE = 100;
+
 const LINE_TYPES = {
-  '#333333': { label: 'ground', restitution: 0.3, friction: 0.6 },
-  '#f5c542': { label: 'bounce', restitution: 3.0, friction: 0.05 },
-  '#e74c3c': { label: 'kill', restitution: 0.3, friction: 0.6 },
+  ground:   { color: '#333333', restitution: 0.3, friction: 0.6 },
+  bounce:   { color: '#f5c542', restitution: 3.0, friction: 0.05 },
+  kill:     { color: '#e74c3c', restitution: 0.3, friction: 0.6 },
+  ironwall: { color: '#808080', restitution: 0.3, friction: 0.6 },
 };
+// Backward compat: color → type name lookup
+const COLOR_TO_TYPE = Object.fromEntries(
+  Object.entries(LINE_TYPES).map(([k, v]) => [v.color, k])
+);
 
 // Ball type definitions
 export const BALL_TYPES = {
@@ -102,16 +127,14 @@ export class PhysicsWorld {
     this._bodies = [];
 
     this._engine = Matter.Engine.create({
-      gravity: { x: 0, y: 1.2 },
-      // Increase solver iterations for better collision accuracy
-      positionIterations: 12,
-      velocityIterations: 8,
+      gravity: { x: 0, y: GRAVITY },
+      positionIterations: POS_ITERATIONS,
+      velocityIterations: VEL_ITERATIONS,
     });
     this._world = this._engine.world;
 
     this._runner = Matter.Runner.create({
-      // Use smaller fixed timestep for more accurate collision detection
-      delta: 1000 / 120,
+      delta: PHYSICS_TIMESTEP,
     });
 
     // Sound event callbacks (set from outside)
@@ -134,9 +157,12 @@ export class PhysicsWorld {
     this._starEffects = []; // Star collection particles
 
     this._score = 0;
+    this._maxBalls = 0;    // 0 = unlimited, >0 = max balls allowed
+    this._ballsUsed = 0;   // balls launched this stage
     this._launcher = null; // Current launcher body (only one allowed)
     this.onStarCollect = null;
 
+    this._lineGroups = []; // Line construction data for serialization
     this._targets = []; // All target bodies
     this._targetEffects = []; // Target explosion particles
     this._stageClear = false;
@@ -184,6 +210,15 @@ export class PhysicsWorld {
         if (!body.isStatic && body.position.y > limit) {
           this._removeBombTimer(body);
           this._destroyBody(i);
+        }
+      }
+      // Check if all balls are used and none remain on screen (fire once)
+      if (this._maxBalls > 0 && this._ballsUsed >= this._maxBalls
+          && !this._stageClear && !this._ballsExhausted) {
+        const hasBalls = this._bodies.some(b => b._type === 'ball');
+        if (!hasBalls && this.onBallsExhausted) {
+          this._ballsExhausted = true;
+          this.onBallsExhausted();
         }
       }
     });
@@ -254,8 +289,8 @@ export class PhysicsWorld {
         let ny = swapped ? normal.y : -normal.y;
 
         const speed = Math.hypot(ball.velocity.x, ball.velocity.y);
-        const multiplier = ball._ballType === 'bouncy' ? 3.5 : 2.5;
-        const minSpeed = ball._ballType === 'bouncy' ? 20 : 16;
+        const multiplier = ball._ballType === 'bouncy' ? BOUNCY_MULT : NORMAL_BOUNCE_MULT;
+        const minSpeed = ball._ballType === 'bouncy' ? BOUNCY_MIN_SPEED : NORMAL_MIN_SPEED;
         const launchSpeed = Math.max(speed * multiplier, minSpeed);
 
         const dot = ball.velocity.x * nx + ball.velocity.y * ny;
@@ -301,7 +336,7 @@ export class PhysicsWorld {
 
         // Fast-moving balls deal extra damage
         const speed = Math.hypot(ball.velocity.x, ball.velocity.y);
-        if (speed > 15) {
+        if (speed > IMPACT_DAMAGE_SPEED) {
           damage += 1;
         }
 
@@ -312,15 +347,13 @@ export class PhysicsWorld {
 
         // Initialize health if not set (base durability = 10)
         if (!this._lineHealth.has(line.id)) {
-          if (line.label === 'kill') {
-            // Kill lines are unbreakable
+          if (line.label === 'kill' || line.label === 'ironwall') {
+            // Kill lines and iron walls are unbreakable
             this._lineHealth.set(line.id, Infinity);
           } else if (line.label === 'bounce') {
-            // Bounce lines are tougher
-            this._lineHealth.set(line.id, 15);
+            this._lineHealth.set(line.id, LINE_HP.bounce);
           } else {
-            // Ground lines: base durability 50
-            this._lineHealth.set(line.id, 50);
+            this._lineHealth.set(line.id, LINE_HP.ground);
           }
         }
 
@@ -365,8 +398,6 @@ export class PhysicsWorld {
 
   // Magnet forces: attract opposite poles, repel same poles
   _setupMagnetForces() {
-    const MAGNET_RANGE = 200;
-    const MAGNET_STRENGTH = 0.0004;
 
     Matter.Events.on(this._engine, 'afterUpdate', () => {
       const magnets = this._bodies.filter(b => b._magnet);
@@ -434,7 +465,7 @@ export class PhysicsWorld {
 
     const x = body.position.x;
     const y = body.position.y;
-    const BLAST_RADIUS = 150;
+    // Use module-level BLAST_RADIUS constant
 
     // Big explosion effect
     for (let k = 0; k < 3; k++) {
@@ -452,7 +483,7 @@ export class PhysicsWorld {
       const dist = Math.hypot(dx, dy);
       if (dist > BLAST_RADIUS) continue;
 
-      if (b._type === 'line' && b.label !== 'kill') {
+      if (b._type === 'line' && b.label !== 'kill' && b.label !== 'ironwall') {
         bodiesToDestroy.push(b);
       } else if (b._type === 'ball') {
         // Push away
@@ -489,55 +520,89 @@ export class PhysicsWorld {
     if (idx !== -1) this._bombs.splice(idx, 1);
   }
 
-  _spawnExplosion(x, y) {
-    const count = 12;
+  // ── Generic particle helpers ────────────────────────────────────────────────
+
+  /**
+   * Spawn particles into a target array.
+   * @param {number} x - center X
+   * @param {number} y - center Y
+   * @param {Array} target - array to push particles into
+   * @param {Object} cfg - configuration
+   */
+  _spawnParticles(x, y, target, {
+    count, speedMin = 1, speedMax = 4, decayMin = 0.02, decayMax = 0.04,
+    sizeMin = 2, sizeMax = 5, colors = ['#fff'], gravity = 0,
+    uniform = false, vyOffset = 0, extra = null,
+  }) {
     for (let i = 0; i < count; i++) {
-      const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.5;
-      const speed = 2 + Math.random() * 4;
-      this._explosions.push({
-        x,
-        y,
+      const angle = uniform
+        ? (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.5
+        : Math.random() * Math.PI * 2;
+      const speed = speedMin + Math.random() * (speedMax - speedMin);
+      const p = {
+        x, y,
         vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
+        vy: Math.sin(angle) * speed + vyOffset,
         life: 1.0,
-        size: 3 + Math.random() * 5,
-        color: Math.random() > 0.5 ? '#e74c3c' : '#f39c12',
-      });
+        decay: decayMin + Math.random() * (decayMax - decayMin),
+        size: sizeMin + Math.random() * (sizeMax - sizeMin),
+        color: colors[Math.floor(Math.random() * colors.length)],
+        gravity,
+      };
+      if (extra) Object.assign(p, extra(i));
+      target.push(p);
     }
+  }
+
+  /**
+   * Generic particle update loop. Handles position, velocity, gravity, decay.
+   * @param {Array} arr - particle array
+   * @param {Function} [tickFn] - optional per-particle tick (p, i) => void
+   */
+  _updateParticles(arr, tickFn) {
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const p = arr[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      if (p.gravity) p.vy += p.gravity;
+      p.life -= p.decay;
+      if (tickFn) tickFn(p, i);
+      if (p.life <= 0) arr.splice(i, 1);
+    }
+  }
+
+  // ── Concrete particle spawners (delegate to _spawnParticles) ───────────────
+
+  _spawnExplosion(x, y) {
+    this._spawnParticles(x, y, this._explosions, {
+      count: 12, speedMin: 2, speedMax: 6,
+      decayMin: 0.025, decayMax: 0.025,
+      sizeMin: 3, sizeMax: 8,
+      colors: ['#e74c3c', '#f39c12'],
+      gravity: 0.1, uniform: true,
+    });
   }
 
   _spawnDebris(x, y, color) {
-    const count = 6 + Math.floor(Math.random() * 5);
-    for (let i = 0; i < count; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 1.5 + Math.random() * 3;
-      this._debris.push({
-        x,
-        y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed - 1,
-        life: 1.0,
-        size: 2 + Math.random() * 4,
-        color: color || '#aaaaaa',
+    this._spawnParticles(x, y, this._debris, {
+      count: 6 + Math.floor(Math.random() * 5),
+      speedMin: 1.5, speedMax: 4.5,
+      decayMin: 0.03, decayMax: 0.03,
+      sizeMin: 2, sizeMax: 6,
+      colors: [color || '#aaaaaa'],
+      gravity: 0.15, vyOffset: -1,
+      extra: () => ({
         rotation: Math.random() * Math.PI * 2,
         rotSpeed: (Math.random() - 0.5) * 0.3,
-      });
-    }
+      }),
+    });
   }
 
   updateDebris() {
-    for (let i = this._debris.length - 1; i >= 0; i--) {
-      const p = this._debris[i];
-      p.x += p.vx;
-      p.y += p.vy;
-      p.vy += 0.15;
+    this._updateParticles(this._debris, (p) => {
       p.vx *= 0.97;
-      p.rotation += p.rotSpeed;
-      p.life -= 0.03;
-      if (p.life <= 0) {
-        this._debris.splice(i, 1);
-      }
-    }
+      if (p.rotSpeed) p.rotation += p.rotSpeed;
+    });
   }
 
   get debris() {
@@ -637,18 +702,9 @@ export class PhysicsWorld {
   }
 
   updateImpactEffects() {
-    for (let i = this._impactEffects.length - 1; i >= 0; i--) {
-      const p = this._impactEffects[i];
-      p.x += p.vx;
-      p.y += p.vy;
-      if (!p.flash) {
-        p.vy += 0.04;
-      }
-      p.life -= p.decay;
-      if (p.life <= 0) {
-        this._impactEffects.splice(i, 1);
-      }
-    }
+    this._updateParticles(this._impactEffects, (p) => {
+      if (!p.flash) p.vy += 0.04;
+    });
   }
 
   get impactEffects() {
@@ -710,31 +766,20 @@ export class PhysicsWorld {
   }
 
   _spawnFireBurst(x, y, count = 12) {
-    for (let i = 0; i < count; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 1 + Math.random() * 4;
-      this._fireParticles.push({
-        x, y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed - 2,
-        life: 1.0,
-        decay: 0.03 + Math.random() * 0.04,
-        size: 5 + Math.random() * 8,
-        phase: Math.random() * Math.PI * 2,
-      });
-    }
+    this._spawnParticles(x, y, this._fireParticles, {
+      count, speedMin: 1, speedMax: 5,
+      decayMin: 0.03, decayMax: 0.07,
+      sizeMin: 5, sizeMax: 13,
+      colors: ['#ff4400'], vyOffset: -2,
+      extra: () => ({ phase: Math.random() * Math.PI * 2 }),
+    });
   }
 
   updateFireParticles() {
-    for (let i = this._fireParticles.length - 1; i >= 0; i--) {
-      const p = this._fireParticles[i];
-      p.x += p.vx;
-      p.y += p.vy;
+    this._updateParticles(this._fireParticles, (p) => {
       p.vx *= 0.96;
-      p.vy -= 0.02; // 부력 (위로 가속)
-      p.life -= p.decay;
-      if (p.life <= 0) this._fireParticles.splice(i, 1);
-    }
+      p.vy -= 0.02;
+    });
   }
 
   get fireParticles() {
@@ -822,16 +867,10 @@ export class PhysicsWorld {
   }
 
   updatePlasmaArcs() {
-    for (let i = this._plasmaArcs.length - 1; i >= 0; i--) {
-      const p = this._plasmaArcs[i];
-      if (p.spark) {
-        p.x += p.vx;
-        p.y += p.vy;
-        p.vy += 0.05;
-      }
-      p.life -= p.decay;
-      if (p.life <= 0) this._plasmaArcs.splice(i, 1);
-    }
+    this._updateParticles(this._plasmaArcs, (p) => {
+      if (p.spark) p.vy += 0.05;
+      else { p.vx = 0; p.vy = 0; } // arcs don't move
+    });
   }
 
   get plasmaArcs() {
@@ -839,16 +878,7 @@ export class PhysicsWorld {
   }
 
   updateExplosions() {
-    for (let i = this._explosions.length - 1; i >= 0; i--) {
-      const p = this._explosions[i];
-      p.x += p.vx;
-      p.y += p.vy;
-      p.vy += 0.1;
-      p.life -= 0.025;
-      if (p.life <= 0) {
-        this._explosions.splice(i, 1);
-      }
-    }
+    this._updateParticles(this._explosions);
   }
 
   get explosions() {
@@ -857,8 +887,18 @@ export class PhysicsWorld {
 
   _destroyBody(index) {
     const body = this._bodies[index];
+    const bodyId = body.id;
     Matter.Composite.remove(this._world, body);
     this._bodies.splice(index, 1);
+    // Clean up lineGroups references
+    for (let i = this._lineGroups.length - 1; i >= 0; i--) {
+      const g = this._lineGroups[i];
+      const idx = g.bodyIds.indexOf(bodyId);
+      if (idx !== -1) {
+        g.bodyIds.splice(idx, 1);
+        if (g.bodyIds.length === 0) this._lineGroups.splice(i, 1);
+      }
+    }
   }
 
   removeBody(body) {
@@ -907,10 +947,12 @@ export class PhysicsWorld {
     return ball;
   }
 
-  addLine(points, color, rotating = false, moving = false) {
+  addLine(points, color, rotating = false, moving = false, type = null) {
     if (points.length < 2) return [];
 
-    const props = LINE_TYPES[color] || LINE_TYPES['#333333'];
+    const typeName = type || COLOR_TO_TYPE[color] || 'ground';
+    const props = LINE_TYPES[typeName] || LINE_TYPES.ground;
+    const resolvedColor = color || props.color;
     const createdBodies = [];
 
     for (let i = 0; i < points.length - 1; i++) {
@@ -924,21 +966,21 @@ export class PhysicsWorld {
       if (length < 2) continue;
 
       const angle = Math.atan2(dy, dx);
-      const segment = Matter.Bodies.rectangle(cx, cy, length, 15, {
+      const segment = Matter.Bodies.rectangle(cx, cy, length, LINE_THICKNESS, {
         isStatic: true,
         angle: angle,
         restitution: props.restitution,
         friction: props.friction,
-        label: props.label,
-        render: { fillStyle: color },
-        chamfer: { radius: 2 },
+        label: typeName,
+        render: { fillStyle: resolvedColor },
       });
       segment._type = 'line';
-      segment._color = color;
+      segment._color = resolvedColor;
+      segment._lineTypeName = typeName;
 
       // 회전 벽
       segment._rotating = rotating;
-      if (rotating) segment._rotSpeed = 0.008;
+      if (rotating) segment._rotSpeed = WALL_ROTATION_SPEED;
 
       // 움직이는 벽
       segment._moving = moving;
@@ -949,7 +991,7 @@ export class PhysicsWorld {
         segment._moveOriginY = cy;
         segment._moveDirX = dx / len;
         segment._moveDirY = dy / len;
-        segment._moveAmplitude = Math.min(length * 0.6, 100); // 선 길이의 60%, 최대 100px
+        segment._moveAmplitude = Math.min(length * 0.6, MOVE_MAX_AMPLITUDE);
         segment._movePhase = Math.random() * Math.PI * 2;     // 세그먼트별 위상 랜덤
         segment._moveSpeed = 0.9 + Math.random() * 0.4;       // 약간씩 다른 속도
       }
@@ -957,6 +999,17 @@ export class PhysicsWorld {
       Matter.Composite.add(this._world, segment);
       this._bodies.push(segment);
       createdBodies.push(segment);
+    }
+
+    if (createdBodies.length > 0) {
+      this._lineGroups.push({
+        points: points.map(p => ({ x: p.x, y: p.y })),
+        color: resolvedColor,
+        type: typeName,
+        rotating,
+        moving,
+        bodyIds: createdBodies.map(b => b.id),
+      });
     }
 
     return createdBodies;
@@ -1096,18 +1149,9 @@ export class PhysicsWorld {
   }
 
   updateLaunchTrails() {
-    for (let i = this._launchTrails.length - 1; i >= 0; i--) {
-      const p = this._launchTrails[i];
-      p.x += p.vx;
-      p.y += p.vy;
-      if (!p.ring && !p.streak) {
-        p.vy += 0.05; // slight gravity on burst particles
-      }
-      p.life -= p.decay;
-      if (p.life <= 0) {
-        this._launchTrails.splice(i, 1);
-      }
-    }
+    this._updateParticles(this._launchTrails, (p) => {
+      if (!p.ring && !p.streak) p.vy += 0.05;
+    });
   }
 
   get launchTrails() {
@@ -1162,7 +1206,6 @@ export class PhysicsWorld {
   }
 
   _setupStarCollection() {
-    const STAR_COLLECT_RADIUS = 33; // ball radius (15) + star radius (18)
 
     Matter.Events.on(this._engine, 'afterUpdate', () => {
       for (let i = this._bodies.length - 1; i >= 0; i--) {
@@ -1186,47 +1229,25 @@ export class PhysicsWorld {
   }
 
   _spawnStarEffect(x, y) {
-    // Radial golden particles
-    const count = 20;
-    for (let i = 0; i < count; i++) {
-      const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.4;
-      const speed = 2 + Math.random() * 4;
-      this._starEffects.push({
-        x, y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        life: 1.0,
-        decay: 0.02 + Math.random() * 0.02,
-        size: 2 + Math.random() * 4,
-        color: Math.random() > 0.4 ? '#ffd700' : '#fff8dc',
-      });
-    }
+    this._spawnParticles(x, y, this._starEffects, {
+      count: 20, speedMin: 2, speedMax: 6,
+      decayMin: 0.02, decayMax: 0.04,
+      sizeMin: 2, sizeMax: 6,
+      colors: ['#ffd700', '#ffd700', '#fff8dc'],
+      gravity: 0.05, uniform: true,
+    });
     // Central flash
     this._starEffects.push({
-      x, y,
-      vx: 0, vy: 0,
-      life: 1.0,
-      decay: 0.06,
-      size: 25,
-      flash: true,
-      color: '#ffd700',
+      x, y, vx: 0, vy: 0,
+      life: 1.0, decay: 0.06, size: 25,
+      flash: true, color: '#ffd700',
     });
   }
 
   updateStarEffects() {
-    for (let i = this._starEffects.length - 1; i >= 0; i--) {
-      const p = this._starEffects[i];
-      p.x += p.vx;
-      p.y += p.vy;
-      if (!p.flash) {
-        p.vy += 0.05;
-        p.vx *= 0.98;
-      }
-      p.life -= p.decay;
-      if (p.life <= 0) {
-        this._starEffects.splice(i, 1);
-      }
-    }
+    this._updateParticles(this._starEffects, (p) => {
+      if (!p.flash) p.vx *= 0.98;
+    });
   }
 
   get starEffects() {
@@ -1250,7 +1271,6 @@ export class PhysicsWorld {
   }
 
   _setupTargetHit() {
-    const TARGET_HIT_RADIUS = 37; // ball radius (15) + target radius (22)
 
     Matter.Events.on(this._engine, 'afterUpdate', () => {
       if (this._stageClear) return;
@@ -1286,47 +1306,25 @@ export class PhysicsWorld {
   }
 
   _spawnTargetExplosion(x, y) {
-    const colors = ['#ff4444', '#ff8800', '#ffcc00', '#ffffff'];
-    const count = 30;
-    for (let i = 0; i < count; i++) {
-      const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.5;
-      const speed = 3 + Math.random() * 6;
-      this._targetEffects.push({
-        x, y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        life: 1.0,
-        decay: 0.015 + Math.random() * 0.015,
-        size: 3 + Math.random() * 5,
-        color: colors[Math.floor(Math.random() * colors.length)],
-      });
-    }
+    this._spawnParticles(x, y, this._targetEffects, {
+      count: 30, speedMin: 3, speedMax: 9,
+      decayMin: 0.015, decayMax: 0.03,
+      sizeMin: 3, sizeMax: 8,
+      colors: ['#ff4444', '#ff8800', '#ffcc00', '#ffffff'],
+      gravity: 0.08, uniform: true,
+    });
     // Central flash
     this._targetEffects.push({
-      x, y,
-      vx: 0, vy: 0,
-      life: 1.0,
-      decay: 0.04,
-      size: 40,
-      flash: true,
-      color: '#ffcc00',
+      x, y, vx: 0, vy: 0,
+      life: 1.0, decay: 0.04, size: 40,
+      flash: true, color: '#ffcc00',
     });
   }
 
   updateTargetEffects() {
-    for (let i = this._targetEffects.length - 1; i >= 0; i--) {
-      const p = this._targetEffects[i];
-      p.x += p.vx;
-      p.y += p.vy;
-      if (!p.flash) {
-        p.vy += 0.08;
-        p.vx *= 0.97;
-      }
-      p.life -= p.decay;
-      if (p.life <= 0) {
-        this._targetEffects.splice(i, 1);
-      }
-    }
+    this._updateParticles(this._targetEffects, (p) => {
+      if (!p.flash) p.vx *= 0.97;
+    });
   }
 
   get targetEffects() {
@@ -1349,6 +1347,13 @@ export class PhysicsWorld {
     return this._score;
   }
 
+  get maxBalls() { return this._maxBalls; }
+  get ballsUsed() { return this._ballsUsed; }
+  get ballsRemaining() {
+    return this._maxBalls > 0 ? this._maxBalls - this._ballsUsed : Infinity;
+  }
+  incrementBallsUsed() { this._ballsUsed++; }
+
   spendScore(amount) {
     if (this._score >= amount) {
       this._score -= amount;
@@ -1361,14 +1366,18 @@ export class PhysicsWorld {
     this._bombs = [];
     this._plasmaArcs = [];
     this._lineHealth.clear();
-    this._score = 0;
     this._launcher = null;
     this._targets = [];
     this._targetEffects = [];
     this._stageClear = false;
+    this._lineGroups = [];
     for (let i = this._bodies.length - 1; i >= 0; i--) {
       this._destroyBody(i);
     }
+  }
+
+  resetScore() {
+    this._score = 0;
   }
 
   resize(w, h) {
@@ -1394,7 +1403,7 @@ export class PhysicsWorld {
     if (!this._lineHealth.has(body.id)) return 1;
     const health = this._lineHealth.get(body.id);
     if (health === Infinity) return 1;
-    const maxHealth = body.label === 'bounce' ? 15 : 50;
+    const maxHealth = body.label === 'bounce' ? LINE_HP.bounce : LINE_HP.ground;
     return Math.max(0, Math.min(1, health / maxHealth));
   }
 
@@ -1410,7 +1419,201 @@ export class PhysicsWorld {
     return this._runner;
   }
 
+  // ── Line group editing API ──────────────────────────────────────────────────
+
+  get lineGroups() { return this._lineGroups; }
+
+  findLineGroupByBodyId(bodyId) {
+    return this._lineGroups.find(g => g.bodyIds.includes(bodyId));
+  }
+
+  /** Update a lineGroup's points and rebuild its Matter.js body. */
+  updateLineGroupPoints(lineGroup, newPoints) {
+    // Remove old bodies
+    for (const id of lineGroup.bodyIds) {
+      const idx = this._bodies.findIndex(b => b.id === id);
+      if (idx !== -1) {
+        Matter.Composite.remove(this._world, this._bodies[idx]);
+        this._bodies.splice(idx, 1);
+      }
+      delete this._lineHealth[id];
+    }
+
+    // Rebuild from new points
+    const p1 = newPoints[0], p2 = newPoints[1];
+    const cx = (p1.x + p2.x) / 2;
+    const cy = (p1.y + p2.y) / 2;
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 2) return;
+
+    const typeName = lineGroup.type || 'ground';
+    const props = LINE_TYPES[typeName] || LINE_TYPES.ground;
+    const angle = Math.atan2(dy, dx);
+
+    const segment = Matter.Bodies.rectangle(cx, cy, length, LINE_THICKNESS, {
+      isStatic: true,
+      angle,
+      restitution: props.restitution,
+      friction: props.friction,
+      label: typeName,
+      render: { fillStyle: lineGroup.color },
+    });
+    segment._type = 'line';
+    segment._color = lineGroup.color;
+    segment._lineTypeName = typeName;
+    segment._rotating = lineGroup.rotating;
+    if (lineGroup.rotating) segment._rotSpeed = WALL_ROTATION_SPEED;
+    segment._moving = lineGroup.moving;
+    if (lineGroup.moving) {
+      const len = length || 1;
+      segment._moveOriginX = cx;
+      segment._moveOriginY = cy;
+      segment._moveDirX = dx / len;
+      segment._moveDirY = dy / len;
+      segment._moveAmplitude = Math.min(length * 0.6, MOVE_MAX_AMPLITUDE);
+      segment._movePhase = Math.random() * Math.PI * 2;
+      segment._moveSpeed = 0.9 + Math.random() * 0.4;
+    }
+
+    Matter.Composite.add(this._world, segment);
+    this._bodies.push(segment);
+
+    lineGroup.points = newPoints.map(p => ({ x: p.x, y: p.y }));
+    lineGroup.bodyIds = [segment.id];
+  }
+
+  /** Move a lineGroup by delta without rebuilding the body. */
+  moveLineGroup(lineGroup, dx, dy) {
+    for (const id of lineGroup.bodyIds) {
+      const body = this._bodies.find(b => b.id === id);
+      if (body) {
+        Matter.Body.setPosition(body, {
+          x: body.position.x + dx,
+          y: body.position.y + dy,
+        });
+        if (body._moving) {
+          body._moveOriginX += dx;
+          body._moveOriginY += dy;
+        }
+      }
+    }
+    for (const p of lineGroup.points) {
+      p.x += dx;
+      p.y += dy;
+    }
+  }
+
   get bodyCount() {
     return this._bodies.length;
   }
+
+  serializeStage(level = 0, locked = false) {
+    const data = {
+      version: 1,
+      designSize: {
+        w: this._canvas.cssWidth || this._canvas.width,
+        h: this._canvas.cssHeight || this._canvas.height,
+      },
+      level,
+      locked,
+      maxBalls: this._maxBalls,
+      lines: this._lineGroups.map(g => ({
+        points: g.points,
+        color: g.color,
+        type: g.type,
+        rotating: g.rotating,
+        moving: g.moving,
+      })),
+      balls: [],
+      stars: [],
+      targets: [],
+      launcher: null,
+    };
+
+    for (const body of this._bodies) {
+      if (body._type === 'ball') {
+        data.balls.push({ x: body.position.x, y: body.position.y, type: body._ballType });
+      } else if (body._type === 'star') {
+        data.stars.push({ x: body.position.x, y: body.position.y });
+      }
+    }
+
+    for (const target of this._targets) {
+      data.targets.push({ x: target.position.x, y: target.position.y });
+    }
+
+    if (this._launcher) {
+      data.launcher = { x: this._launcher.position.x, y: this._launcher.position.y };
+    }
+
+    return data;
+  }
+
+  loadStage(data) {
+    this.clearAll();
+    this._maxBalls = data.maxBalls || 0;
+    this._ballsUsed = 0;
+    this._ballsExhausted = false;
+
+    // Scale coordinates if stage has a designSize different from current canvas
+    const canvasW = this._canvas.cssWidth || this._canvas.width;
+    const canvasH = this._canvas.cssHeight || this._canvas.height;
+    const ds = data.designSize;
+    const sx = ds ? canvasW / ds.w : 1;
+    const sy = ds ? canvasH / ds.h : 1;
+    const scaleX = (x) => x * sx;
+    const scaleY = (y) => y * sy;
+
+    if (data.lines) {
+      for (const line of data.lines) {
+        const pts = line.points.map(p => ({ x: scaleX(p.x), y: scaleY(p.y) }));
+        this.addLine(pts, line.color, line.rotating, line.moving, line.type || null);
+      }
+    }
+
+    if (data.balls) {
+      for (const ball of data.balls) {
+        this.addBall(scaleX(ball.x), scaleY(ball.y), ball.type);
+      }
+    }
+
+    if (data.stars) {
+      for (const star of data.stars) {
+        this.addStar(scaleX(star.x), scaleY(star.y));
+      }
+    }
+
+    if (data.targets) {
+      for (const target of data.targets) {
+        this.addTarget(scaleX(target.x), scaleY(target.y));
+      }
+    }
+
+    if (data.launcher) {
+      this.addLauncher(scaleX(data.launcher.x), scaleY(data.launcher.y));
+    }
+  }
+}
+
+// ── Stage localStorage persistence ──────────────────────────────────────────
+const STORAGE_KEY = 'justball_stages';
+
+export function getSavedStages() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+  } catch { return {}; }
+}
+
+export function saveStage(name, data) {
+  const stages = getSavedStages();
+  stages[name] = { data, savedAt: Date.now() };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(stages));
+}
+
+export function deleteStage(name) {
+  const stages = getSavedStages();
+  delete stages[name];
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(stages));
 }

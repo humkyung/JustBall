@@ -19,7 +19,18 @@
       <div class="separator"></div>
       <span class="hint">Space=일시정지 | X=인벤토리 | Q=파워모드</span>
       <div class="separator"></div>
+      <button id="test-mode-btn" title="현재 맵 테스트">&#9654; 테스트</button>
       <button id="clear-btn" title="Clear All">&#128465; Clear</button>
+    </div>
+    <div id="lobby-overlay">
+      <div id="lobby-content">
+        <h1 class="lobby-title">JustBall</h1>
+        <p class="lobby-subtitle">2D 샌드박스 물리 퍼즐 게임</p>
+        <div class="lobby-buttons">
+          <button id="btn-play-mode" class="lobby-btn">&#127918; 플레이 모드</button>
+          <button id="btn-sandbox-mode" class="lobby-btn">&#129514; 샌드박스 모드</button>
+        </div>
+      </div>
     </div>
     <canvas id="game-canvas"></canvas>
     <div id="status">Bodies: 0</div>

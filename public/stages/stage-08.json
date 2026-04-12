@@ -1,0 +1,116 @@
+{
+  "name": "8. 데스 트랩",
+  "data": {
+    "version": 1,
+    "designSize": {
+      "w": 1024,
+      "h": 768
+    },
+    "level": 8,
+    "locked": true,
+    "lines": [
+      {
+        "points": [
+          {
+            "x": 64,
+            "y": 691
+          },
+          {
+            "x": 960,
+            "y": 691
+          }
+        ],
+        "color": "#333333",
+        "rotating": false,
+        "moving": false,
+        "type": "ground"
+      },
+      {
+        "points": [
+          {
+            "x": 576,
+            "y": 384
+          },
+          {
+            "x": 896,
+            "y": 384
+          }
+        ],
+        "color": "#e74c3c",
+        "rotating": false,
+        "moving": false,
+        "type": "kill"
+      },
+      {
+        "points": [
+          {
+            "x": 640,
+            "y": 614
+          },
+          {
+            "x": 896,
+            "y": 614
+          }
+        ],
+        "color": "#e74c3c",
+        "rotating": false,
+        "moving": false,
+        "type": "kill"
+      },
+      {
+        "points": [
+          {
+            "x": 896,
+            "y": 384
+          },
+          {
+            "x": 896,
+            "y": 614
+          }
+        ],
+        "color": "#e74c3c",
+        "rotating": false,
+        "moving": false,
+        "type": "kill"
+      },
+      {
+        "points": [
+          {
+            "x": 704,
+            "y": 476
+          },
+          {
+            "x": 704,
+            "y": 614
+          }
+        ],
+        "color": "#808080",
+        "rotating": false,
+        "moving": false,
+        "type": "ironwall"
+      }
+    ],
+    "balls": [],
+    "stars": [
+      {
+        "x": 640,
+        "y": 522
+      },
+      {
+        "x": 794,
+        "y": 492
+      }
+    ],
+    "targets": [
+      {
+        "x": 794,
+        "y": 568
+      }
+    ],
+    "launcher": {
+      "x": 128,
+      "y": 630
+    },
+    "maxBalls": 12
+  }
+}

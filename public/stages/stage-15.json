@@ -1,0 +1,31 @@
+{
+  "name": "15. 공중 요새",
+  "data": {
+    "version": 1,
+    "designSize": { "w": 1024, "h": 768 },
+    "level": 15,
+    "locked": true,
+    "maxBalls": 3,
+    "lines": [
+      { "points": [{"x":64,"y":710},{"x":960,"y":710}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":600,"y":180},{"x":850,"y":180}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":600,"y":180},{"x":600,"y":250}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":850,"y":180},{"x":850,"y":250}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":700,"y":130},{"x":750,"y":130}], "color": "#333333", "type": "ground", "rotating": false, "moving": true },
+      { "points": [{"x":200,"y":600},{"x":280,"y":500}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":350,"y":450},{"x":430,"y":350}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":480,"y":300},{"x":560,"y":220}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":300,"y":350},{"x":300,"y":500}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":500,"y":250},{"x":500,"y":400}], "color": "#333333", "type": "ground", "rotating": false, "moving": false }
+    ],
+    "balls": [],
+    "stars": [
+      {"x": 350, "y": 400},
+      {"x": 550, "y": 250}
+    ],
+    "targets": [
+      {"x": 725, "y": 160}
+    ],
+    "launcher": {"x": 120, "y": 650}
+  }
+}

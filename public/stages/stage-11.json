@@ -1,0 +1,32 @@
+{
+  "name": "11. 미로 탈출",
+  "data": {
+    "version": 1,
+    "designSize": { "w": 1024, "h": 768 },
+    "level": 11,
+    "locked": false,
+    "maxBalls": 6,
+    "lines": [
+      { "points": [{"x":64,"y":710},{"x":960,"y":710}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":250,"y":400},{"x":250,"y":710}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":250,"y":400},{"x":500,"y":400}], "color": "#e74c3c", "type": "kill", "rotating": false, "moving": false },
+      { "points": [{"x":500,"y":200},{"x":500,"y":400}], "color": "#808080", "type": "ironwall", "rotating": false, "moving": false },
+      { "points": [{"x":500,"y":200},{"x":750,"y":200}], "color": "#333333", "type": "ground", "rotating": false, "moving": false },
+      { "points": [{"x":750,"y":200},{"x":750,"y":500}], "color": "#333333", "type": "ground", "rotating": false, "moving": true },
+      { "points": [{"x":500,"y":560},{"x":750,"y":560}], "color": "#e74c3c", "type": "kill", "rotating": false, "moving": false },
+      { "points": [{"x":150,"y":350},{"x":220,"y":260}], "color": "#f5c542", "type": "bounce", "rotating": false, "moving": false },
+      { "points": [{"x":600,"y":460},{"x":600,"y":550}], "color": "#333333", "type": "ground", "rotating": true, "moving": false }
+    ],
+    "balls": [],
+    "stars": [
+      {"x": 375, "y": 350},
+      {"x": 625, "y": 160},
+      {"x": 850, "y": 450}
+    ],
+    "targets": [
+      {"x": 625, "y": 350},
+      {"x": 850, "y": 660}
+    ],
+    "launcher": {"x": 120, "y": 650}
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "name": "7. 이중 목표",
+  "data": {
+    "version": 1,
+    "designSize": {
+      "w": 1024,
+      "h": 768
+    },
+    "level": 7,
+    "locked": true,
+    "lines": [
+      {
+        "points": [
+          {
+            "x": 64,
+            "y": 691
+          },
+          {
+            "x": 960,
+            "y": 691
+          }
+        ],
+        "color": "#333333",
+        "rotating": false,
+        "moving": false,
+        "type": "ground"
+      },
+      {
+        "points": [
+          {
+            "x": 512,
+            "y": 384
+          },
+          {
+            "x": 512,
+            "y": 691
+          }
+        ],
+        "color": "#333333",
+        "rotating": false,
+        "moving": false,
+        "type": "ground"
+      },
+      {
+        "points": [
+          {
+            "x": 704,
+            "y": 430
+          },
+          {
+            "x": 922,
+            "y": 430
+          }
+        ],
+        "color": "#333333",
+        "rotating": false,
+        "moving": false,
+        "type": "ground"
+      },
+      {
+        "points": [
+          {
+            "x": 256,
+            "y": 538
+          },
+          {
+            "x": 448,
+            "y": 461
+          }
+        ],
+        "color": "#f5c542",
+        "rotating": false,
+        "moving": false,
+        "type": "bounce"
+      }
+    ],
+    "balls": [],
+    "stars": [
+      {
+        "x": 384,
+        "y": 399
+      },
+      {
+        "x": 768,
+        "y": 614
+      }
+    ],
+    "targets": [
+      {
+        "x": 384,
+        "y": 645
+      },
+      {
+        "x": 819,
+        "y": 387
+      }
+    ],
+    "launcher": {
+      "x": 128,
+      "y": 630
+    },
+    "maxBalls": 4
+  }
+}
