@@ -204,12 +204,33 @@ export class PhysicsWorld {
 
   _setupOOBDetection() {
     Matter.Events.on(this._engine, 'afterUpdate', () => {
-      const limit = (this._canvas.cssHeight || this._canvas.height) + 100;
+      const w = (this._canvas.cssWidth || this._canvas.width);
+      const h = (this._canvas.cssHeight || this._canvas.height);
+      const margin = 200;
+      const now = Date.now();
       for (let i = this._bodies.length - 1; i >= 0; i--) {
         const body = this._bodies[i];
-        if (!body.isStatic && body.position.y > limit) {
+        if (body.isStatic) continue;
+        const { x, y } = body.position;
+        // Remove bodies that left the screen
+        if (y > h + margin || y < -margin || x < -margin || x > w + margin) {
           this._removeBombTimer(body);
           this._destroyBody(i);
+          continue;
+        }
+        // Remove balls that have been nearly stationary for too long
+        if (body._type === 'ball') {
+          const speed = Math.hypot(body.velocity.x, body.velocity.y);
+          if (speed < 0.3) {
+            if (!body._idleSince) body._idleSince = now;
+            else if (now - body._idleSince > 3000) {
+              this._removeBombTimer(body);
+              this._destroyBody(i);
+              continue;
+            }
+          } else {
+            body._idleSince = 0;
+          }
         }
       }
       // Check if all balls are used and none remain on screen (fire once)
@@ -1597,23 +1618,3 @@ export class PhysicsWorld {
   }
 }
 
-// ── Stage localStorage persistence ──────────────────────────────────────────
-const STORAGE_KEY = 'justball_stages';
-
-export function getSavedStages() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
-  } catch { return {}; }
-}
-
-export function saveStage(name, data) {
-  const stages = getSavedStages();
-  stages[name] = { data, savedAt: Date.now() };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(stages));
-}
-
-export function deleteStage(name) {
-  const stages = getSavedStages();
-  delete stages[name];
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(stages));
-}

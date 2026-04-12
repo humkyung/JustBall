@@ -3,7 +3,7 @@ import { PhysicsWorld, BALL_TYPES } from './physics.js';
 import { Toolbar } from './toolbar.js';
 import { SoundSystem } from './sound.js';
 import { generateBackground } from './background.js';
-import { loadDefaultStages, getStageProgress, saveStageProgress } from './defaultStages.js';
+import { initDB, persistDB, getAllStages, getProgress, saveProgress } from './db.js';
 
 const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
@@ -170,8 +170,8 @@ function exitTestMode() {
 }
 
 async function enterPlayMode() {
-  // Load stages from JSON files
-  const entries = await loadDefaultStages();
+  // Load stages from SQLite DB
+  const entries = getAllStages();
 
   if (entries.length === 0) {
     const notice = document.createElement('div');
@@ -183,12 +183,12 @@ async function enterPlayMode() {
   }
 
   // Apply lock state based on progress
-  const progress = getStageProgress();
+  const progress = getProgress();
   playStageList = entries.map(e => ({
     name: e.name,
     data: e.data,
-    level: e.data.level || 0,
-    locked: (e.data.level || 0) > progress + 1,
+    level: e.level || 0,
+    locked: (e.level || 0) > progress + 1,
   }));
 
   // Find first unlocked stage to start from (or the furthest unlocked)
@@ -240,7 +240,8 @@ function showEndCheck(reason) {
   // Save progress immediately on clear so grid renders correct state
   if (reason === 'clear') {
     const clearedLevel = playStageList[playStageIndex].level || 0;
-    saveStageProgress(clearedLevel);
+    saveProgress(clearedLevel);
+    persistDB();
     // Unlock next stage
     if (playStageIndex + 1 < playStageList.length) {
       playStageList[playStageIndex + 1].locked = false;
@@ -291,14 +292,9 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
     e.preventDefault();
     if (gameMode === 'sandbox') {
-      const result = toolbar.quickSave();
-      if (result) {
-        quickSaveToast = { text: `"${result.name}" 저장 중...`, time: performance.now() };
-        result.promise.then(() => {
-          quickSaveToast = { text: `"${result.name}" 파일 저장 완료`, time: performance.now() };
-        }).catch(() => {
-          quickSaveToast = { text: '파일 저장 실패 (개발 서버 확인)', time: performance.now() };
-        });
+      const savedName = toolbar.quickSave();
+      if (savedName) {
+        quickSaveToast = { text: `"${savedName}" 저장 완료`, time: performance.now() };
       } else {
         quickSaveToast = { text: '먼저 인벤토리에서 스테이지를 불러오세요', time: performance.now() };
       }
@@ -1509,7 +1505,7 @@ function renderUI(ctx, W, H) {
       }
 
       // ── Stage grid with minimap ─────────────────────────────────────
-      const progress = getStageProgress();
+      const progress = getProgress();
       const cols = 5;
       const boxW = 120, boxH = 100, gap = 14;
       const rows = Math.ceil(playStageList.length / cols);
@@ -1715,4 +1711,8 @@ function render() {
   requestAnimationFrame(render);
 }
 
-render();
+// ── App bootstrap: init DB then start render loop ────────────────────────────
+(async () => {
+  await initDB();
+  render();
+})();

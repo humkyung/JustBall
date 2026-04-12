@@ -1,5 +1,5 @@
-import { BALL_TYPES, getSavedStages, saveStage, deleteStage } from './physics.js';
-import { loadDefaultStages, getStageProgress } from './defaultStages.js';
+import { BALL_TYPES } from './physics.js';
+import { getAllStages, saveStage, deleteStage, getProgress, persistDB } from './db.js';
 
 // ── Launch speed constants ──────────────────────────────────────────────────
 const LAUNCH_SPEED_MULTIPLIER = 0.15; // drag distance → speed conversion
@@ -241,8 +241,6 @@ export class Toolbar {
             <button id="inv-stage-save">저장</button>
           </div>
           <div id="inv-stage-list"></div>
-          <button id="inv-stage-import">파일에서 불러오기 (.json)</button>
-          <input id="inv-stage-file" type="file" accept=".json" style="display:none">
         </div>
 
         <div id="inv-desc"></div>
@@ -339,38 +337,20 @@ export class Toolbar {
     const stageSaveBtn = document.getElementById('inv-stage-save');
     const stageListEl = document.getElementById('inv-stage-list');
 
-    this._refreshStageList = async () => {
-      stageListEl.innerHTML = '<div style="color:#555;font-size:12px;text-align:center;padding:8px;">로딩 중...</div>';
-
-      // Merge default stages (from JSON files) + user stages (from localStorage)
-      const userStages = getSavedStages();
-      const defaultStages = await loadDefaultStages().catch(() => []);
-      const progress = getStageProgress();
-
-      // Build unified list: { name, data, source: 'default'|'user', locked }
-      const merged = {};
-      for (const ds of defaultStages) {
-        const isLocked = (ds.data.level || 0) > progress + 1;
-        merged[ds.name] = { data: ds.data, source: 'default', locked: isLocked, _filename: ds._filename };
-      }
-      for (const [name, s] of Object.entries(userStages)) {
-        // User-saved stages always override defaults (e.g. Ctrl+S edits)
-        merged[name] = { data: s.data, source: 'user', locked: false };
-      }
-
-      const names = Object.keys(merged).sort((a, b) => {
-        const la = merged[a].data?.level ?? 999;
-        const lb = merged[b].data?.level ?? 999;
-        return la !== lb ? la - lb : a.localeCompare(b);
-      });
+    this._refreshStageList = () => {
+      // Load all stages from SQLite DB
+      const stages = getAllStages();
+      const progress = getProgress();
 
       stageListEl.innerHTML = '';
-      if (names.length === 0) {
+      if (stages.length === 0) {
         stageListEl.innerHTML = '<div style="color:#555;font-size:12px;text-align:center;padding:8px;">저장된 맵이 없습니다</div>';
         return;
       }
-      for (const name of names) {
-        const stageInfo = merged[name];
+      for (const stageInfo of stages) {
+        const name = stageInfo.name;
+        const isLocked = (stageInfo.level || 0) > progress + 1;
+        stageInfo.locked = isLocked;
         const entry = document.createElement('div');
         entry.className = 'inv-stage-entry';
 
@@ -423,6 +403,7 @@ export class Toolbar {
         delBtn.addEventListener('click', () => {
           if (stageInfo.source === 'default') return;
           deleteStage(name);
+          persistDB();
           this._refreshStageList();
           descEl.textContent = `"${name}" 맵이 삭제되었습니다.`;
         });
@@ -441,6 +422,7 @@ export class Toolbar {
       if (!name) { descEl.textContent = '맵 이름을 입력해주세요.'; return; }
       const data = this._world.serializeStage();
       saveStage(name, data);
+      persistDB();
       this._loadedStageName = name;
       stageNameInput.value = '';
       this._refreshStageList();
@@ -452,35 +434,6 @@ export class Toolbar {
       e.stopPropagation();
     });
     stageNameInput.addEventListener('keyup', (e) => e.stopPropagation());
-
-    // ── File import ──
-    const stageImportBtn = document.getElementById('inv-stage-import');
-    const stageFileInput = document.getElementById('inv-stage-file');
-
-    stageImportBtn.addEventListener('click', () => stageFileInput.click());
-    stageFileInput.addEventListener('change', () => {
-      const file = stageFileInput.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = JSON.parse(e.target.result);
-          if (!data.version || !data.lines) {
-            descEl.textContent = '유효하지 않은 맵 파일입니다.';
-            return;
-          }
-          const name = file.name.replace(/\.json$/i, '');
-          saveStage(name, data);
-          this._loadedStageName = name;
-          this._refreshStageList();
-          descEl.textContent = `"${name}" 맵을 파일에서 가져왔습니다.`;
-        } catch {
-          descEl.textContent = '파일을 읽는 중 오류가 발생했습니다.';
-        }
-        stageFileInput.value = '';
-      };
-      reader.readAsText(file);
-    });
 
     this._refreshStageList();
 
@@ -540,24 +493,14 @@ export class Toolbar {
   }
 
   // ── Quick save (Ctrl+S) ────────────────────────────────────────────────────
-  /** Save current stage to public/stages/ file. Returns {name, promise}. */
+  /** Save current stage to SQLite DB. Returns stage name or null. */
   quickSave() {
     if (!this._loadedStageName) return null;
     const data = this._world.serializeStage();
-    const filename = this._loadedStageFilename;
-    if (!filename) return null;
-
-    const fileContent = { name: this._loadedStageName, data };
-    const promise = fetch('/__api/save-stage', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename, content: fileContent }),
-    }).then(res => {
-      if (!res.ok) throw new Error('Save failed');
-      return res.json();
-    });
-
-    return { name: this._loadedStageName, promise };
+    const filename = this._loadedStageFilename || null;
+    saveStage(this._loadedStageName, data, 'user', filename);
+    persistDB();
+    return this._loadedStageName;
   }
 
   get loadedStageName() { return this._loadedStageName; }
