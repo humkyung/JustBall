@@ -99,9 +99,13 @@ export function saveStage(name, data, source = 'user', filename = null) {
     level = (rows.length > 0 && rows[0].maxLv != null) ? rows[0].maxLv + 1 : 1;
   }
   const locked = data.locked ? 1 : 0;
+  const jsonData = JSON.stringify(data);
+
+  // ON CONFLICT를 사용하여 이름이 겹치면 data만 업데이트 (SQLite 3.24.0 이상 지원)
   db.run(
-    `INSERT OR REPLACE INTO stages (name, filename, data, source, level, locked)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO stages (name, filename, data, source, level, locked)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET data = excluded.data`,
     [name, filename, JSON.stringify(data), source, level, locked]
   );
 }
