@@ -159,6 +159,7 @@ export class PhysicsWorld {
     this._score = 0;
     this._maxBalls = 0;    // 0 = unlimited, >0 = max balls allowed
     this._ballsUsed = 0;   // balls launched this stage
+    this._backgroundImage = null; // base64 string or null
     this._launcher = null; // Current launcher body (only one allowed)
     this.onStarCollect = null;
 
@@ -1369,6 +1370,8 @@ export class PhysicsWorld {
   }
 
   get maxBalls() { return this._maxBalls; }
+  get backgroundImage() { return this._backgroundImage; }
+  set backgroundImage(val) { this._backgroundImage = val || null; }
   get ballsUsed() { return this._ballsUsed; }
   get ballsRemaining() {
     return this._maxBalls > 0 ? this._maxBalls - this._ballsUsed : Infinity;
@@ -1551,6 +1554,7 @@ export class PhysicsWorld {
       stars: [],
       targets: [],
       launcher: null,
+      backgroundImage: this._backgroundImage || null,
     };
 
     for (const body of this._bodies) {
@@ -1577,6 +1581,7 @@ export class PhysicsWorld {
     this._maxBalls = data.maxBalls || 0;
     this._ballsUsed = 0;
     this._ballsExhausted = false;
+    this._backgroundImage = data.backgroundImage || null;
 
     // Scale coordinates if stage has a designSize different from current canvas
     const canvasW = this._canvas.cssWidth || this._canvas.width;

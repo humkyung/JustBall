@@ -205,6 +205,24 @@ export class Toolbar {
       }
       #inv-stage-import:hover { border-color: #533483; background: #0f3460; }
 
+      /* Background image section */
+      #inv-bg-row {
+        display: flex; gap: 8px; margin-bottom: 8px;
+      }
+      #inv-bg-row button {
+        flex: 1; padding: 8px 12px; border: 2px solid #0f3460; border-radius: 6px;
+        background: #1a1a2e; color: #e0e0e0; cursor: pointer; font-size: 13px;
+        font-family: inherit; transition: all 0.15s;
+      }
+      #inv-bg-select:hover { background: #533483; }
+      #inv-bg-remove:hover { background: #e74c3c; }
+      #inv-bg-preview {
+        max-height: 80px; overflow: hidden; border-radius: 6px; text-align: center;
+      }
+      #inv-bg-preview img {
+        max-width: 100%; max-height: 80px; border-radius: 6px; object-fit: cover;
+      }
+
       /* Description bar */
       #inv-desc {
         color: rgba(255,255,255,0.45); font-size: 12px; text-align: center;
@@ -231,6 +249,17 @@ export class Toolbar {
         <div class="inv-section inv-section-lines">
         <div class="inv-section-title">선 종류</div>
         <div id="inv-line-row"></div>
+        </div>
+
+        <div class="inv-section inv-section-bg">
+          <hr class="inv-divider">
+          <div class="inv-section-title">배경 이미지</div>
+          <div id="inv-bg-row">
+            <button id="inv-bg-select">이미지 선택</button>
+            <button id="inv-bg-remove">제거</button>
+          </div>
+          <div id="inv-bg-preview"></div>
+          <input id="inv-bg-file" type="file" accept="image/*" style="display:none">
         </div>
 
         <div class="inv-section inv-section-stages">
@@ -373,7 +402,8 @@ export class Toolbar {
           if (stageInfo.locked) return;
           this._world.loadStage(stageInfo.data);
           this._loadedStageName = name;
-          this._loadedStageFilename = stageInfo._filename || null;
+          this._loadedStageFilename = stageInfo.filename || null;
+          if (this._onBackgroundChange) this._onBackgroundChange();
           this._closeInventory();
         });
 
@@ -437,6 +467,45 @@ export class Toolbar {
 
     this._refreshStageList();
 
+    // ── Background image ────────────────────────────────────────────────────
+    const bgSelectBtn = document.getElementById('inv-bg-select');
+    const bgRemoveBtn = document.getElementById('inv-bg-remove');
+    const bgFileInput = document.getElementById('inv-bg-file');
+    const bgPreview = document.getElementById('inv-bg-preview');
+
+    const updateBgPreview = () => {
+      const src = this._world.backgroundImage;
+      if (src) {
+        bgPreview.innerHTML = `<img src="${src}" alt="bg">`;
+      } else {
+        bgPreview.innerHTML = '<div style="color:#555;font-size:12px;">설정 안 됨</div>';
+      }
+    };
+
+    bgSelectBtn.addEventListener('click', () => bgFileInput.click());
+    bgFileInput.addEventListener('change', () => {
+      const file = bgFileInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        this._world.backgroundImage = ev.target.result; // base64 data URL
+        updateBgPreview();
+        descEl.textContent = '배경 이미지가 설정되었습니다.';
+        if (this._onBackgroundChange) this._onBackgroundChange();
+      };
+      reader.readAsDataURL(file);
+      bgFileInput.value = '';
+    });
+    bgRemoveBtn.addEventListener('click', () => {
+      this._world.backgroundImage = null;
+      updateBgPreview();
+      descEl.textContent = '배경 이미지가 제거되었습니다.';
+      if (this._onBackgroundChange) this._onBackgroundChange();
+    });
+
+    // Refresh preview when inventory opens
+    this._updateBgPreview = updateBgPreview;
+
     // ── Initial desc ────────────────────────────────────────────────────────
     descEl.textContent = BALL_TYPES[this._selectedBallType].desc;
 
@@ -466,8 +535,12 @@ export class Toolbar {
     // In play/test mode, show only line types
     const playOnly = this._playModeOnly;
     document.querySelector('.inv-section-lines').style.display = playOnly ? 'none' : '';
+    document.querySelector('.inv-section-bg').style.display = playOnly ? 'none' : '';
     document.querySelector('.inv-section-stages').style.display = playOnly ? 'none' : '';
-    if (!playOnly && this._refreshStageList) this._refreshStageList();
+    if (!playOnly) {
+      if (this._refreshStageList) this._refreshStageList();
+      if (this._updateBgPreview) this._updateBgPreview();
+    }
   }
 
   _closeInventory() {

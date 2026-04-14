@@ -85,6 +85,7 @@ let endCheckReason = null;    // 'clear' | 'quit' | null
 let endCheckSelectedIndex = 0; // cursor position in stage grid
 let quickSaveToast = null;     // { text, time } for Ctrl+S feedback
 let testClearTimer = null;    // setTimeout id for testMode auto-return
+let customBgImage = null;     // Image object for stage background (or null → default)
 
 const lobbyOverlay = document.getElementById('lobby-overlay');
 const toolbarEl = document.getElementById('toolbar');
@@ -94,6 +95,21 @@ function resizeAndRegenBg() {
   resizeCanvas();
   bgCanvas = generateBackground(canvas.cssWidth, canvas.cssHeight, canvas.dpr || 1);
 }
+
+/** Update customBgImage from the current world's backgroundImage data. */
+function updateCustomBg() {
+  const src = world.backgroundImage;
+  if (src) {
+    const img = new Image();
+    img.src = src;
+    customBgImage = img;
+  } else {
+    customBgImage = null;
+  }
+}
+
+// Callback: toolbar notifies when background changes in sandbox
+toolbar._onBackgroundChange = updateCustomBg;
 
 function setPhysicsRunning(running) {
   if (running) {
@@ -111,6 +127,7 @@ function showLobby() {
   if (testClearTimer) { clearTimeout(testClearTimer); testClearTimer = null; }
   world.clearAll();
   world.resetScore();
+  customBgImage = null;
   setPhysicsRunning(false);
   // Exit fullscreen if active
   if (document.fullscreenElement) {
@@ -159,6 +176,7 @@ function exitTestMode() {
   paused = false;
   if (sandboxSnapshot) {
     world.loadStage(sandboxSnapshot);
+    updateCustomBg();
     sandboxSnapshot = null;
   }
   toolbarEl.style.display = 'flex';
@@ -222,6 +240,7 @@ function loadPlayStage(index) {
   const entry = playStageList[playStageIndex];
   if (entry.locked) return; // cannot play locked stages
   world.loadStage(entry.data);
+  updateCustomBg();
   localStorage.setItem('justball_lastPlayedStage', entry.name);
   endCheckReason = null;
   stageClearTime = 0;
@@ -1697,8 +1716,12 @@ function render() {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
 
-  // Draw cached background (stars, nebula, grid)
-  ctx.drawImage(bgCanvas, 0, 0, W, H);
+  // Draw background: custom image if set, otherwise default procedural
+  if (customBgImage && customBgImage.complete) {
+    ctx.drawImage(customBgImage, 0, 0, W, H);
+  } else {
+    ctx.drawImage(bgCanvas, 0, 0, W, H);
+  }
 
   renderBodies(ctx, W, H);
   renderEffects(ctx, W, H);
