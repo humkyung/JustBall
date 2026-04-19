@@ -6,17 +6,20 @@ const PHYSICS_TIMESTEP = 1000 / 120;
 const POS_ITERATIONS = 12;
 const VEL_ITERATIONS = 8;
 const BLAST_RADIUS = 150;
-const MAGNET_RANGE = 200;
-const MAGNET_STRENGTH = 0.0004;
+const FIRE_FIELD_RADIUS = 150;
+const FIRE_FIELD_DURATION = 3000;
+const PLASMA_BOX_RANGE = 150;
+const PLASMA_BOX_INTERVAL = 3000;
+const PLASMA_BOX_FIRE_DURATION = 400;
+const PLASMA_BOX_HALF_SIZE = 24;
 const STAR_COLLECT_RADIUS = 33;
 const TARGET_HIT_RADIUS = 37;
-const IMPACT_DAMAGE_SPEED = 15;
-const LINE_HP = { ground: 50, bounce: 15 };
+const LINE_HP = { ground: 50, bounce: 30 };
 const BOUNCY_MULT = 3.5;
 const NORMAL_BOUNCE_MULT = 2.5;
 const BOUNCY_MIN_SPEED = 20;
 const NORMAL_MIN_SPEED = 16;
-const WALL_ROTATION_SPEED = 0.008;
+const WALL_ROTATION_SPEED = 0.48; // radians per second (time-based, independent of physics timestep)
 const LINE_THICKNESS = 10;
 const MOVE_MAX_AMPLITUDE = 100;
 
@@ -42,6 +45,7 @@ export const BALL_TYPES = {
     color: '#7b68ee',
     icon: '⚪',
     desc: '기본 공',
+    damage: 5,
   },
   iron: {
     name: '쇠공',
@@ -52,6 +56,7 @@ export const BALL_TYPES = {
     color: '#8a8a8a',
     icon: '⚫',
     desc: '무겁고 단단한 쇠공. 선을 쉽게 부순다.',
+    damage: 20,
   },
   bouncy: {
     name: '탱탱볼',
@@ -62,28 +67,7 @@ export const BALL_TYPES = {
     color: '#ff69b4',
     icon: '🔴',
     desc: '매우 잘 튕기는 탱탱볼.',
-  },
-  magnetN: {
-    name: '자석볼 (N극)',
-    radius: 15,
-    density: 0.008,
-    restitution: 0.4,
-    friction: 0.3,
-    color: '#ff4444',
-    icon: '🔴',
-    desc: 'N극 자석. 같은 극끼리 밀고, 다른 극끼리 당긴다.',
-    magnet: 'N',
-  },
-  magnetS: {
-    name: '자석볼 (S극)',
-    radius: 15,
-    density: 0.008,
-    restitution: 0.4,
-    friction: 0.3,
-    color: '#4444ff',
-    icon: '🔵',
-    desc: 'S극 자석. 같은 극끼리 밀고, 다른 극끼리 당긴다.',
-    magnet: 'S',
+    damage: 10,
   },
   bomb: {
     name: '시한폭탄볼',
@@ -95,6 +79,7 @@ export const BALL_TYPES = {
     icon: '💣',
     desc: '5초 후 폭발! 주변 선과 공을 파괴한다.',
     fuseTime: 5000,
+    damage: 10,
   },
   fireball: {
     name: '파이어볼',
@@ -105,6 +90,7 @@ export const BALL_TYPES = {
     color: '#ff4400',
     icon: '🔥',
     desc: '불꽃을 내뿜으며 닿는 모든 공을 파괴!',
+    damage: 10,
   },
   plasma: {
     name: '플라즈마볼',
@@ -118,6 +104,7 @@ export const BALL_TYPES = {
     chainRange: 150,
     chainInterval: 2000,
     chainCount: 3,
+    damage: 10,
   },
 };
 
@@ -153,6 +140,8 @@ export class PhysicsWorld {
     this._launchTrails = []; // Launch trail particles
     this._impactEffects = []; // Collision impact particles
     this._fireParticles = []; // Fireball flame particles
+    this._fireFields = []; // Persistent fire areas after fireball explosion
+    this._fireExplodeQueue = []; // Fireballs queued to explode
     this._plasmaArcs = []; // Plasma electric arc particles
     this._starEffects = []; // Star collection particles
 
@@ -166,6 +155,7 @@ export class PhysicsWorld {
     this._lineGroups = []; // Line construction data for serialization
     this._targets = []; // All target bodies
     this._targetEffects = []; // Target explosion particles
+    this._plasmaBoxes = []; // All plasma box bodies
     this._stageClear = false;
     this.onStageClear = null;
     this.onTargetHit = null;
@@ -176,7 +166,6 @@ export class PhysicsWorld {
     this._setupBounceBoost();
     this._setupBottomRescue();
     this._setupLineBreaking();
-    this._setupMagnetForces();
     this._setupBombTimers();
     this._setupImpactEffects();
     this._setupFireball();
@@ -184,6 +173,7 @@ export class PhysicsWorld {
     this._setupRotatingWalls();
     this._setupStarCollection();
     this._setupTargetHit();
+    this._setupPlasmaBox();
 
     Matter.Runner.run(this._runner, this._engine);
   }
@@ -348,23 +338,13 @@ export class PhysicsWorld {
 
         if (!ball || !line) continue;
 
-        // Calculate impact damage: 1 per hit by default
-        let damage = 1;
+        // Base damage (HP) looked up from ball table
+        const ballDef = BALL_TYPES[ball._ballType] || BALL_TYPES.normal;
+        let damage = ballDef.damage ?? 1;
 
-        // Iron balls deal 3x damage
-        if (ball._ballType === 'iron') {
-          damage = 3;
-        }
-
-        // Fast-moving balls deal extra damage
-        const speed = Math.hypot(ball.velocity.x, ball.velocity.y);
-        if (speed > IMPACT_DAMAGE_SPEED) {
-          damage += 1;
-        }
-
-        // Power boost: 3x damage multiplier
+        // Power boost: +10 damage bonus
         if (ball._powerBoost) {
-          damage *= 3;
+          damage += 10;
         }
 
         // Initialize health if not set (base durability = 10)
@@ -416,55 +396,6 @@ export class PhysicsWorld {
         rotSpeed: (Math.random() - 0.5) * 0.4,
       });
     }
-  }
-
-  // Magnet forces: attract opposite poles, repel same poles
-  _setupMagnetForces() {
-
-    Matter.Events.on(this._engine, 'afterUpdate', () => {
-      const magnets = this._bodies.filter(b => b._magnet);
-      for (let i = 0; i < magnets.length; i++) {
-        for (let j = i + 1; j < magnets.length; j++) {
-          const a = magnets[i];
-          const b = magnets[j];
-          const dx = b.position.x - a.position.x;
-          const dy = b.position.y - a.position.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist < 5 || dist > MAGNET_RANGE) continue;
-
-          const nx = dx / dist;
-          const ny = dy / dist;
-
-          // Same pole = repel, different pole = attract
-          const samePolarity = a._magnet === b._magnet;
-          const sign = samePolarity ? -1 : 1;
-
-          // Force falls off with distance squared
-          const force = sign * MAGNET_STRENGTH / (dist * dist) * 10000;
-
-          Matter.Body.applyForce(a, a.position, { x: nx * force, y: ny * force });
-          Matter.Body.applyForce(b, b.position, { x: -nx * force, y: -ny * force });
-        }
-
-        // Also attract/repel magnet balls toward/from nearby metal (iron) balls
-        const ironBalls = this._bodies.filter(b => b._ballType === 'iron');
-        for (const iron of ironBalls) {
-          const a = magnets[i];
-          const dx = iron.position.x - a.position.x;
-          const dy = iron.position.y - a.position.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist < 5 || dist > MAGNET_RANGE) continue;
-
-          const nx = dx / dist;
-          const ny = dy / dist;
-          // Magnets always attract iron
-          const force = MAGNET_STRENGTH / (dist * dist) * 8000;
-
-          Matter.Body.applyForce(a, a.position, { x: nx * force, y: ny * force });
-          Matter.Body.applyForce(iron, iron.position, { x: -nx * force, y: -ny * force });
-        }
-      }
-    });
   }
 
   // Bomb timer: explode after fuse time
@@ -735,17 +666,22 @@ export class PhysicsWorld {
 
   // ── Fireball ───────────────────────────────────────────────────────────────
   _setupFireball() {
-    // Kill any ball that a fireball touches
+    // Kill any ball that a fireball touches; explode when hitting a line/wall
     Matter.Events.on(this._engine, 'collisionStart', (event) => {
       for (const pair of event.pairs) {
         const { bodyA, bodyB } = pair;
         let fireball = null;
         let victim = null;
+        let line = null;
 
         if (bodyA._ballType === 'fireball' && bodyB._type === 'ball' && bodyB !== bodyA) {
           fireball = bodyA; victim = bodyB;
         } else if (bodyB._ballType === 'fireball' && bodyA._type === 'ball' && bodyA !== bodyB) {
           fireball = bodyB; victim = bodyA;
+        } else if (bodyA._ballType === 'fireball' && (bodyB._type === 'line' || bodyB.label === 'wall')) {
+          fireball = bodyA; line = bodyB;
+        } else if (bodyB._ballType === 'fireball' && (bodyA._type === 'line' || bodyA.label === 'wall')) {
+          fireball = bodyB; line = bodyA;
         }
 
         if (fireball && victim) {
@@ -756,11 +692,66 @@ export class PhysicsWorld {
           this._killQueue.push(victim);
           if (this.onKill) this.onKill();
         }
+
+        if (fireball && line && !this._fireExplodeQueue.includes(fireball)) {
+          this._fireExplodeQueue.push(fireball);
+        }
       }
     });
 
-    // Spawn continuous fire trail particles for each fireball
+    // Process explosions, advance fire fields, and spawn trails
     Matter.Events.on(this._engine, 'afterUpdate', () => {
+      // Explode queued fireballs
+      while (this._fireExplodeQueue.length > 0) {
+        const fb = this._fireExplodeQueue.pop();
+        this._explodeFireball(fb);
+      }
+
+      // Update fire fields (decay + destroy targets inside)
+      const now = Date.now();
+      for (let i = this._fireFields.length - 1; i >= 0; i--) {
+        const field = this._fireFields[i];
+        const elapsed = now - field.startTime;
+        field.life = Math.max(0, 1 - elapsed / field.duration);
+
+        // Destroy targets inside field
+        for (let t = this._bodies.length - 1; t >= 0; t--) {
+          const target = this._bodies[t];
+          if (target._type !== 'target') continue;
+          const dx = target.position.x - field.x;
+          const dy = target.position.y - field.y;
+          if (dx * dx + dy * dy <= field.radius * field.radius) {
+            this._spawnTargetExplosion(target.position.x, target.position.y);
+            if (this.onTargetHit) this.onTargetHit(target);
+            const tIdx = this._targets.indexOf(target);
+            if (tIdx !== -1) this._targets.splice(tIdx, 1);
+            this._destroyBody(t);
+            if (this._targets.length === 0 && !this._stageClear) {
+              this._stageClear = true;
+              if (this.onStageClear) this.onStageClear();
+            }
+          }
+        }
+
+        // Emit flickering embers so the residue is visible
+        if (Math.random() < 0.6 * field.life) {
+          const angle = Math.random() * Math.PI * 2;
+          const r = Math.random() * field.radius;
+          this._fireParticles.push({
+            x: field.x + Math.cos(angle) * r,
+            y: field.y + Math.sin(angle) * r,
+            vx: (Math.random() - 0.5) * 0.8,
+            vy: -(0.3 + Math.random() * 0.8),
+            life: 0.8 * field.life,
+            decay: 0.03 + Math.random() * 0.03,
+            size: 4 + Math.random() * 6,
+            phase: Math.random() * Math.PI * 2,
+          });
+        }
+
+        if (field.life <= 0) this._fireFields.splice(i, 1);
+      }
+
       for (const body of this._bodies) {
         if (body._ballType !== 'fireball') continue;
         const vx = body.velocity.x;
@@ -797,6 +788,33 @@ export class PhysicsWorld {
     });
   }
 
+  _explodeFireball(body) {
+    const idx = this._bodies.indexOf(body);
+    if (idx === -1) return;
+    const x = body.position.x;
+    const y = body.position.y;
+
+    // Visuals: explosion rings, fire burst, debris
+    for (let k = 0; k < 2; k++) {
+      this._spawnExplosion(x + (Math.random() - 0.5) * 20, y + (Math.random() - 0.5) * 20);
+    }
+    this._spawnFireBurst(x, y, 30);
+    this._spawnDebris(x, y, '#ff6600');
+
+    // Persistent fire field
+    this._fireFields.push({
+      x, y,
+      radius: FIRE_FIELD_RADIUS,
+      duration: FIRE_FIELD_DURATION,
+      startTime: Date.now(),
+      life: 1.0,
+    });
+
+    if (this.onBombExplode) this.onBombExplode();
+
+    this._destroyBody(idx);
+  }
+
   updateFireParticles() {
     this._updateParticles(this._fireParticles, (p) => {
       p.vx *= 0.96;
@@ -806,6 +824,10 @@ export class PhysicsWorld {
 
   get fireParticles() {
     return this._fireParticles;
+  }
+
+  get fireFields() {
+    return this._fireFields;
   }
 
   // ── Plasma (Electric Chain) ──────────────────────────────────────────────
@@ -818,9 +840,10 @@ export class PhysicsWorld {
         if (!body._lastChainTime) body._lastChainTime = now;
         if (now - body._lastChainTime < def.chainInterval) continue;
 
-        // Find nearby non-plasma balls
+        // Find nearby non-plasma balls and targets
         const candidates = this._bodies.filter(
-          b => b._type === 'ball' && b !== body && b._ballType !== 'plasma'
+          b => (b._type === 'ball' && b !== body && b._ballType !== 'plasma') ||
+               b._type === 'target'
         );
         if (candidates.length === 0) continue;
 
@@ -842,7 +865,21 @@ export class PhysicsWorld {
 
           hit.add(closest);
           this._spawnElectricArc(prev.position.x, prev.position.y, closest.position.x, closest.position.y);
-          this._killQueue.push(closest);
+
+          if (closest._type === 'target') {
+            this._spawnTargetExplosion(closest.position.x, closest.position.y);
+            if (this.onTargetHit) this.onTargetHit(closest);
+            const tIdx = this._targets.indexOf(closest);
+            if (tIdx !== -1) this._targets.splice(tIdx, 1);
+            const bIdx = this._bodies.indexOf(closest);
+            if (bIdx !== -1) this._destroyBody(bIdx);
+            if (this._targets.length === 0 && !this._stageClear) {
+              this._stageClear = true;
+              if (this.onStageClear) this.onStageClear();
+            }
+          } else {
+            this._killQueue.push(closest);
+          }
           prev = closest;
         }
         if (hit.size > 0 && this.onPlasmaChain) this.onPlasmaChain();
@@ -921,6 +958,11 @@ export class PhysicsWorld {
         if (g.bodyIds.length === 0) this._lineGroups.splice(i, 1);
       }
     }
+    // Clean up plasmaBoxes reference
+    if (body._type === 'plasmaBox') {
+      const pIdx = this._plasmaBoxes.indexOf(body);
+      if (pIdx !== -1) this._plasmaBoxes.splice(pIdx, 1);
+    }
   }
 
   removeBody(body) {
@@ -947,7 +989,6 @@ export class PhysicsWorld {
     ball._type = 'ball';
     ball._ballType = type;
     ball._ballColor = def.color;
-    if (def.magnet) ball._magnet = def.magnet;
 
     // Enable CCD (continuous collision detection)
     Matter.Body.set(ball, {
@@ -1038,11 +1079,12 @@ export class PhysicsWorld {
   }
 
   _setupRotatingWalls() {
-    Matter.Events.on(this._engine, 'beforeUpdate', () => {
+    Matter.Events.on(this._engine, 'beforeUpdate', (event) => {
       const t = Date.now() / 1000;
+      const dt = (event && event.delta ? event.delta : PHYSICS_TIMESTEP) / 1000;
       for (const body of this._bodies) {
         if (body._rotating) {
-          Matter.Body.setAngle(body, body.angle + body._rotSpeed);
+          Matter.Body.setAngle(body, body.angle + body._rotSpeed * dt);
         }
         if (body._moving) {
           const offset = Math.sin(t * body._moveSpeed + body._movePhase) * body._moveAmplitude;
@@ -1357,6 +1399,58 @@ export class PhysicsWorld {
     return this._targets;
   }
 
+  // ── Plasma Box ─────────────────────────────────────────────────────────────
+
+  addPlasmaBox(x, y) {
+    const size = PLASMA_BOX_HALF_SIZE * 2;
+    const box = Matter.Bodies.rectangle(x, y, size, size, {
+      isStatic: true,
+      isSensor: true,
+      label: 'plasmaBox',
+      render: { fillStyle: '#7c4dff' },
+    });
+    box._type = 'plasmaBox';
+    box._lastChainTime = Date.now();
+    box._firingUntil = 0;
+    Matter.Composite.add(this._world, box);
+    this._bodies.push(box);
+    this._plasmaBoxes.push(box);
+    return box;
+  }
+
+  _setupPlasmaBox() {
+    Matter.Events.on(this._engine, 'afterUpdate', () => {
+      const now = Date.now();
+      for (const box of this._plasmaBoxes) {
+        if (now - box._lastChainTime < PLASMA_BOX_INTERVAL) continue;
+
+        // Find nearest ball within range
+        let closest = null;
+        let closestDist = Infinity;
+        for (const b of this._bodies) {
+          if (b._type !== 'ball') continue;
+          const d = Math.hypot(b.position.x - box.position.x, b.position.y - box.position.y);
+          if (d < closestDist && d <= PLASMA_BOX_RANGE) {
+            closest = b;
+            closestDist = d;
+          }
+        }
+        if (!closest) continue;
+
+        box._lastChainTime = now;
+        box._firingUntil = now + PLASMA_BOX_FIRE_DURATION;
+
+        this._spawnElectricArc(box.position.x, box.position.y, closest.position.x, closest.position.y);
+        this._killQueue.push(closest);
+        if (this.onPlasmaChain) this.onPlasmaChain();
+      }
+    });
+  }
+
+  get plasmaBoxes() {
+    return this._plasmaBoxes;
+  }
+
   get stageClear() {
     return this._stageClear;
   }
@@ -1393,6 +1487,7 @@ export class PhysicsWorld {
     this._launcher = null;
     this._targets = [];
     this._targetEffects = [];
+    this._plasmaBoxes = [];
     this._stageClear = false;
     this._lineGroups = [];
     for (let i = this._bodies.length - 1; i >= 0; i--) {
@@ -1553,6 +1648,7 @@ export class PhysicsWorld {
       balls: [],
       stars: [],
       targets: [],
+      plasmaBoxes: [],
       launcher: null,
       backgroundImage: this._backgroundImage || null,
     };
@@ -1567,6 +1663,10 @@ export class PhysicsWorld {
 
     for (const target of this._targets) {
       data.targets.push({ x: target.position.x, y: target.position.y });
+    }
+
+    for (const box of this._plasmaBoxes) {
+      data.plasmaBoxes.push({ x: box.position.x, y: box.position.y });
     }
 
     if (this._launcher) {
@@ -1614,6 +1714,12 @@ export class PhysicsWorld {
     if (data.targets) {
       for (const target of data.targets) {
         this.addTarget(scaleX(target.x), scaleY(target.y));
+      }
+    }
+
+    if (data.plasmaBoxes) {
+      for (const box of data.plasmaBoxes) {
+        this.addPlasmaBox(scaleX(box.x), scaleY(box.y));
       }
     }
 

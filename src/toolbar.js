@@ -20,7 +20,7 @@ export class Toolbar {
     this._world = world;
     this._canvas = canvas;
     this._sound = sound;
-    this._tool = 'ball';
+    this._tool = 'wall';
     this._color = '#333333';
     this._lineType = 'ground';
     this._lineRotating = false;
@@ -56,18 +56,101 @@ export class Toolbar {
   }
 
   _setupToolbar() {
-    document.querySelectorAll('.tool-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.tool-btn').forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
-        this._tool = btn.dataset.tool;
-        this._updateCursor();
+    const gimmickBtn = document.getElementById('gimmick-btn');
+    const gimmickDropdown = document.getElementById('gimmick-dropdown');
+    const gimmickItems = ['launcher', 'star', 'target', 'plasmaBox'];
+
+    const selectTool = (tool, originBtn) => {
+      document.querySelectorAll('.tool-btn').forEach((b) => b.classList.remove('active'));
+      if (gimmickItems.includes(tool)) {
+        gimmickBtn.classList.add('active');
+        // Reflect picked gimmick in the button label
+        const picked = gimmickDropdown.querySelector(`[data-tool="${tool}"]`);
+        if (picked) {
+          const icon = picked.dataset.icon || '\u{1F4E6}';
+          gimmickBtn.innerHTML = `${icon} <span class="caret">\u25BE</span>`;
+        }
+      } else if (originBtn) {
+        originBtn.classList.add('active');
+      }
+      this._tool = tool;
+      this._updateCursor();
+    };
+
+    // Main and dropdown tool buttons
+    document.querySelectorAll('.tool-btn[data-tool]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectTool(btn.dataset.tool, btn);
+        if (btn.classList.contains('gimmick-item')) {
+          gimmickDropdown.classList.add('hidden');
+        }
       });
     });
 
+    // Gimmick dropdown toggle
+    if (gimmickBtn) {
+      gimmickBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        gimmickDropdown.classList.toggle('hidden');
+      });
+      document.addEventListener('click', (e) => {
+        if (!gimmickBtn.contains(e.target) && !gimmickDropdown.contains(e.target)) {
+          gimmickDropdown.classList.add('hidden');
+        }
+      });
+    }
+
+    // Clear
     document.getElementById('clear-btn').addEventListener('click', () => {
       this._world.clearAll();
     });
+
+    // Menu (☰) → opens inventory
+    const menuBtn = document.getElementById('menu-btn');
+    if (menuBtn) {
+      menuBtn.addEventListener('click', () => {
+        if (!this._inputEnabled) return;
+        this._inventoryOpen ? this._closeInventory() : this._openInventory();
+      });
+    }
+
+    // Open (📁) → quick import JSON stage file
+    const openBtn = document.getElementById('open-btn');
+    const menuFileInput = document.getElementById('menu-file-input');
+    if (openBtn && menuFileInput) {
+      openBtn.addEventListener('click', () => menuFileInput.click());
+      menuFileInput.addEventListener('change', () => {
+        const file = menuFileInput.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const data = JSON.parse(ev.target.result);
+            this._world.loadStage(data);
+            this._loadedStageName = file.name.replace(/\.json$/i, '');
+            this._loadedStageFilename = file.name;
+            if (this._onBackgroundChange) this._onBackgroundChange();
+          } catch (err) {
+            console.error('Failed to load stage file:', err);
+          }
+        };
+        reader.readAsText(file);
+        menuFileInput.value = '';
+      });
+    }
+
+    // Help (❓) overlay
+    const helpBtn = document.getElementById('help-btn');
+    const helpOverlay = document.getElementById('help-overlay');
+    const helpClose = document.getElementById('help-close');
+    if (helpBtn && helpOverlay) {
+      helpBtn.addEventListener('click', () => helpOverlay.classList.remove('hidden'));
+      helpClose.addEventListener('click', () => helpOverlay.classList.add('hidden'));
+      helpOverlay.addEventListener('click', (e) => {
+        if (e.target === helpOverlay) helpOverlay.classList.add('hidden');
+      });
+    }
   }
 
   // ── Inventory UI ────────────────────────────────────────────────────────────
@@ -227,6 +310,16 @@ export class Toolbar {
       #inv-desc {
         color: rgba(255,255,255,0.45); font-size: 12px; text-align: center;
         min-height: 18px; margin-top: 12px;
+        transition: all 0.2s;
+      }
+      #inv-desc.success {
+        color: #4ade80; font-size: 14px; font-weight: 700;
+        animation: invDescPulse 0.4s ease-out;
+      }
+      @keyframes invDescPulse {
+        0%   { transform: scale(0.9); opacity: 0.2; }
+        50%  { transform: scale(1.08); opacity: 1; }
+        100% { transform: scale(1); opacity: 1; }
       }
     `;
     document.head.appendChild(style);
@@ -284,6 +377,15 @@ export class Toolbar {
     const ballGrid = document.getElementById('inv-ball-grid');
     const lineRow = document.getElementById('inv-line-row');
     const descEl = document.getElementById('inv-desc');
+    const setDesc = (text, success = false) => {
+      descEl.textContent = text;
+      descEl.classList.remove('success');
+      if (success) {
+        // Force reflow to restart animation even for identical messages
+        void descEl.offsetWidth;
+        descEl.classList.add('success');
+      }
+    };
     const closeBtn = document.getElementById('inv-close');
 
     // ── Ball items ──────────────────────────────────────────────────────────
@@ -294,8 +396,7 @@ export class Toolbar {
 
       const colorMap = {
         normal: '#7b68ee', iron: '#8a8a8a', bouncy: '#ff69b4',
-        magnetN: '#ff4444', magnetS: '#4444ff', bomb: '#222222',
-        fireball: '#ff4400', plasma: '#00ffff',
+        bomb: '#222222', fireball: '#ff4400', plasma: '#00ffff',
       };
       const preview = document.createElement('div');
       preview.className = 'inv-ball-preview';
@@ -449,14 +550,15 @@ export class Toolbar {
 
     stageSaveBtn.addEventListener('click', () => {
       const name = stageNameInput.value.trim();
-      if (!name) { descEl.textContent = '맵 이름을 입력해주세요.'; return; }
+      if (!name) { setDesc('맵 이름을 입력해주세요.'); return; }
       const data = this._world.serializeStage();
       saveStage(name, data);
       persistDB();
       this._loadedStageName = name;
       stageNameInput.value = '';
       this._refreshStageList();
-      descEl.textContent = `"${name}" 맵이 저장되었습니다.`;
+      setDesc(`✓ "${name}" 맵이 저장되었습니다.`, true);
+      if (this._onStageSaved) this._onStageSaved(name);
     });
 
     stageNameInput.addEventListener('keydown', (e) => {
@@ -623,9 +725,20 @@ export class Toolbar {
     if (this._inventoryOpen) return;
     const pos = this._getCanvasPos(e);
 
-    if (e.ctrlKey && !this._playModeOnly) {
+    if ((e.ctrlKey || this._tool === 'select') && !this._playModeOnly) {
       const body = this._world.findBodyAtPoint(pos.x, pos.y);
       if (body) {
+        // For wall bodies, use lineGroup-aware move so the stored points stay in sync
+        if (body._type === 'line') {
+          const lineGroup = this._world.findLineGroupByBodyId(body.id);
+          if (lineGroup) {
+            this._editingLineGroup = lineGroup;
+            this._editMode = 'move';
+            this._editLastPos = pos;
+            this._canvas.setPointerCapture(e.pointerId);
+            return;
+          }
+        }
         this._dragging = body;
         this._dragOffset = { x: pos.x - body.position.x, y: pos.y - body.position.y };
         this._canvas.setPointerCapture(e.pointerId);
@@ -635,6 +748,23 @@ export class Toolbar {
 
     // In play/test mode, only allow ball launching
     if (this._playModeOnly && this._tool !== 'ball') return;
+
+    // Sandbox: dragging an existing object of the active tool's type to move it
+    if (!this._playModeOnly) {
+      const toolBodyType = {
+        ball: 'ball', star: 'star', target: 'target',
+        plasmaBox: 'plasmaBox', launcher: 'launcher',
+      }[this._tool];
+      if (toolBodyType) {
+        const body = this._world.findBodyAtPoint(pos.x, pos.y);
+        if (body && body._type === toolBodyType) {
+          this._dragging = body;
+          this._dragOffset = { x: pos.x - body.position.x, y: pos.y - body.position.y };
+          this._canvas.setPointerCapture(e.pointerId);
+          return;
+        }
+      }
+    }
 
     switch (this._tool) {
       case 'ball': {
@@ -685,14 +815,14 @@ export class Toolbar {
       case 'eraser':
         this._world.removeBodyAtPoint(pos.x, pos.y);
         break;
-      case 'boost':
-        this._world.applyBoost(pos.x, pos.y);
-        break;
       case 'star':
         this._world.addStar(pos.x, pos.y);
         break;
       case 'target':
         this._world.addTarget(pos.x, pos.y);
+        break;
+      case 'plasmaBox':
+        this._world.addPlasmaBox(pos.x, pos.y);
         break;
       case 'launcher': {
         const launcher = this._world.launcher;
@@ -771,13 +901,14 @@ export class Toolbar {
       this._world.unfreezeBody(ball);
 
       if (dist > LAUNCH_MIN_DRAG) {
-        const speed = Math.min(dist * LAUNCH_SPEED_MULTIPLIER, LAUNCH_MAX_SPEED);
+        let speed = Math.min(dist * LAUNCH_SPEED_MULTIPLIER, LAUNCH_MAX_SPEED);
         const nx = dx / dist;
         const ny = dy / dist;
 
-        // Power mode: spend 10 score for 3x damage
+        // Power mode: spend 10 score for +10 damage AND 2x launch speed
         if (this._powerMode && this._world.spendScore(10)) {
           ball._powerBoost = true;
+          speed *= 2;
         }
 
         this._world.launchBody(ball, nx * speed, ny * speed);
@@ -829,18 +960,19 @@ export class Toolbar {
         this._world.unfreezeBody(ball);
 
         if (dist > 5) {
-          const speed = Math.min(dist * 0.15, 30);
+          let speed = Math.min(dist * 0.15, 30);
           const nx = dx / dist;
           const ny = dy / dist;
           if (this._powerMode && this._world.spendScore(10)) {
             ball._powerBoost = true;
+            speed *= 2;
           }
           this._world.launchBody(ball, nx * speed, ny * speed);
           this._world.spawnLaunchEffect(ball.position.x, ball.position.y, nx, ny, speed, ball._powerBoost);
           this._world.incrementBallsUsed();
         }
       }
-    }, 3000);
+    }, 5000);
   }
 
   _cancelLaunchTimer() {
@@ -857,9 +989,10 @@ export class Toolbar {
       case 'wall':
       case 'star':
       case 'target':
+      case 'plasmaBox':
       case 'launcher': this._canvas.style.cursor = 'crosshair'; break;
       case 'eraser': this._canvas.style.cursor = 'pointer'; break;
-      case 'boost': this._canvas.style.cursor = 'cell'; break;
+      case 'select': this._canvas.style.cursor = 'default'; break;
     }
   }
 
@@ -880,7 +1013,7 @@ export class Toolbar {
   get launchTimerRatio() {
     if (!this._launchTimerStart) return 0;
     const elapsed = Date.now() - this._launchTimerStart;
-    return Math.max(0, 1 - elapsed / 3000);
+    return Math.max(0, 1 - elapsed / 5000);
   }
 
   get launchGuide() {

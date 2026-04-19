@@ -23,13 +23,21 @@ targetImg.src = `${import.meta.env.BASE_URL}Target.svg`;
 let targetReady = false;
 targetImg.onload = () => { targetReady = true; };
 
+// Pre-load plasma box images
+const plasmaBoxIdleImg = new Image();
+plasmaBoxIdleImg.src = `${import.meta.env.BASE_URL}plasma_box_1.png`;
+let plasmaBoxIdleReady = false;
+plasmaBoxIdleImg.onload = () => { plasmaBoxIdleReady = true; };
+const plasmaBoxFireImg = new Image();
+plasmaBoxFireImg.src = `${import.meta.env.BASE_URL}plasma_box_2.png`;
+let plasmaBoxFireReady = false;
+plasmaBoxFireImg.onload = () => { plasmaBoxFireReady = true; };
+
 // Resize canvas drawing buffer to match its CSS layout size, respecting devicePixelRatio
 function resizeCanvas() {
-  const toolbarEl = document.getElementById('toolbar');
-  const toolbarH = toolbarEl.offsetHeight && toolbarEl.style.display !== 'none' ? toolbarEl.getBoundingClientRect().height : 0;
   const dpr = window.devicePixelRatio || 1;
   const cssW = window.innerWidth;
-  const cssH = window.innerHeight - toolbarH;
+  const cssH = window.innerHeight;
 
   canvas.width = Math.round(cssW * dpr);
   canvas.height = Math.round(cssH * dpr);
@@ -88,8 +96,17 @@ let testClearTimer = null;    // setTimeout id for testMode auto-return
 let customBgImage = null;     // Image object for stage background (or null → default)
 
 const lobbyOverlay = document.getElementById('lobby-overlay');
-const toolbarEl = document.getElementById('toolbar');
+const panelLeft = document.getElementById('panel-left');
+const panelCenter = document.getElementById('panel-center');
+const panelRight = document.getElementById('panel-right');
 const testModeBtn = document.getElementById('test-mode-btn');
+
+function setPanelsVisible(visible) {
+  const v = visible ? '' : 'none';
+  panelLeft.style.display = v;
+  panelCenter.style.display = v;
+  panelRight.style.display = v;
+}
 
 function resizeAndRegenBg() {
   resizeCanvas();
@@ -110,6 +127,11 @@ function updateCustomBg() {
 
 // Callback: toolbar notifies when background changes in sandbox
 toolbar._onBackgroundChange = updateCustomBg;
+
+// Callback: toolbar notifies when a stage is saved from the inventory panel
+toolbar._onStageSaved = (name) => {
+  quickSaveToast = { text: `"${name}" 저장 완료`, time: performance.now() };
+};
 
 function setPhysicsRunning(running) {
   if (running) {
@@ -134,9 +156,10 @@ function showLobby() {
     document.exitFullscreen().catch(() => { });
   }
   lobbyOverlay.classList.remove('hidden');
-  toolbarEl.style.display = 'none';
+  setPanelsVisible(false);
   toolbar._inputEnabled = false;
   toolbar._playModeOnly = false;
+  if (typeof updateLobbySelection === 'function') updateLobbySelection();
   resizeAndRegenBg();
 }
 
@@ -146,7 +169,7 @@ function enterSandboxMode() {
   stageClearTime = 0;
   paused = false;
   lobbyOverlay.classList.add('hidden');
-  toolbarEl.style.display = 'flex';
+  setPanelsVisible(true);
   testModeBtn.classList.remove('hidden');
   toolbar._inputEnabled = true;
   toolbar._playModeOnly = false;
@@ -161,7 +184,7 @@ function enterTestMode() {
   gameMode = 'testMode';
   stageClearTime = 0;
   paused = false;
-  toolbarEl.style.display = 'none';
+  setPanelsVisible(false);
   toolbar._inputEnabled = true;
   toolbar._playModeOnly = true;
   toolbar._tool = 'ball';
@@ -179,7 +202,7 @@ function exitTestMode() {
     updateCustomBg();
     sandboxSnapshot = null;
   }
-  toolbarEl.style.display = 'flex';
+  setPanelsVisible(true);
   testModeBtn.classList.remove('hidden');
   toolbar._inputEnabled = true;
   toolbar._playModeOnly = false;
@@ -219,7 +242,7 @@ async function enterPlayMode() {
   paused = false;
   world.resetScore();
   lobbyOverlay.classList.add('hidden');
-  toolbarEl.style.display = 'none';
+  setPanelsVisible(false);
   testModeBtn.classList.add('hidden');
   toolbar._inputEnabled = true;
   toolbar._playModeOnly = true;
@@ -295,18 +318,49 @@ world.onBallsExhausted = () => {
 };
 
 // ── Lobby button bindings ──────────────────────────────────────────────────
-document.getElementById('btn-play-mode').addEventListener('click', enterPlayMode);
-document.getElementById('btn-sandbox-mode').addEventListener('click', enterSandboxMode);
+const lobbyPlayBtn = document.getElementById('btn-play-mode');
+const lobbySandboxBtn = document.getElementById('btn-sandbox-mode');
+const lobbyButtons = [lobbyPlayBtn, lobbySandboxBtn];
+let lobbySelectedIndex = 0;
+
+function updateLobbySelection() {
+  lobbyButtons.forEach((btn, i) => {
+    btn.classList.toggle('selected', i === lobbySelectedIndex);
+  });
+}
+updateLobbySelection();
+
+lobbyPlayBtn.addEventListener('click', enterPlayMode);
+lobbySandboxBtn.addEventListener('click', enterSandboxMode);
+lobbyPlayBtn.addEventListener('mouseenter', () => { lobbySelectedIndex = 0; updateLobbySelection(); });
+lobbySandboxBtn.addEventListener('mouseenter', () => { lobbySelectedIndex = 1; updateLobbySelection(); });
 testModeBtn.addEventListener('click', () => {
   if (gameMode === 'sandbox') enterTestMode();
 });
 
-// ── Initial state: show lobby, hide toolbar ────────────────────────────────
-toolbarEl.style.display = 'none';
+// ── Initial state: show lobby, hide panels ─────────────────────────────────
+setPanelsVisible(false);
 toolbar._inputEnabled = false;
 
 // ── Keyboard input ─────────────────────────────────────────────────────────
 document.addEventListener('keydown', (e) => {
+  // Lobby: arrow keys select mode, Enter confirms
+  if (gameMode === 'lobby') {
+    if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+      e.preventDefault();
+      lobbySelectedIndex = e.code === 'ArrowLeft'
+        ? (lobbySelectedIndex - 1 + lobbyButtons.length) % lobbyButtons.length
+        : (lobbySelectedIndex + 1) % lobbyButtons.length;
+      updateLobbySelection();
+      return;
+    }
+    if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+      e.preventDefault();
+      lobbyButtons[lobbySelectedIndex].click();
+      return;
+    }
+  }
+
   // Ctrl+S: quick save in sandbox mode
   if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
     e.preventDefault();
@@ -440,17 +494,51 @@ function renderBodies(ctx, W, H) {
       const ballType = body._ballType || 'normal';
       const ballColor = body._ballColor || '#7b68ee';
 
-      // Power boost glow
+      // Power boost glow + spark trail
       if (body._powerBoost) {
-        const pulse = Math.sin(Date.now() / 150) * 0.3 + 0.7;
-        const glowR = BALL_RADIUS + 10;
+        const now = Date.now();
+        const pulse = Math.sin(now / 150) * 0.3 + 0.7;
+
+        // Motion-reactive trail (behind velocity direction)
+        const vx = body.velocity.x, vy = body.velocity.y;
+        const sp = Math.hypot(vx, vy);
+        if (sp > 1) {
+          const tx = bx - (vx / sp) * (BALL_RADIUS + 6);
+          const ty = by - (vy / sp) * (BALL_RADIUS + 6);
+          const trailGrd = ctx.createRadialGradient(tx, ty, 0, tx, ty, BALL_RADIUS + 14);
+          trailGrd.addColorStop(0, `rgba(255, 215, 0, ${0.55 * pulse})`);
+          trailGrd.addColorStop(1, 'rgba(255, 140, 0, 0)');
+          ctx.beginPath();
+          ctx.arc(tx, ty, BALL_RADIUS + 14, 0, Math.PI * 2);
+          ctx.fillStyle = trailGrd;
+          ctx.fill();
+        }
+
+        // Core glow
+        const glowR = BALL_RADIUS + 12;
         const grd = ctx.createRadialGradient(bx, by, BALL_RADIUS * 0.5, bx, by, glowR);
-        grd.addColorStop(0, `rgba(255, 215, 0, ${0.5 * pulse})`);
+        grd.addColorStop(0, `rgba(255, 230, 100, ${0.65 * pulse})`);
+        grd.addColorStop(0.5, `rgba(255, 180, 30, ${0.4 * pulse})`);
         grd.addColorStop(1, 'rgba(255, 140, 0, 0)');
         ctx.beginPath();
         ctx.arc(bx, by, glowR, 0, Math.PI * 2);
         ctx.fillStyle = grd;
         ctx.fill();
+
+        // Orbiting sparks (3 sparks rotating around the ball)
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        for (let k = 0; k < 3; k++) {
+          const ang = now / 180 + (k * Math.PI * 2) / 3;
+          const r = BALL_RADIUS + 4 + Math.sin(now / 120 + k) * 2;
+          const sx = bx + Math.cos(ang) * r;
+          const sy = by + Math.sin(ang) * r;
+          ctx.beginPath();
+          ctx.arc(sx, sy, 2.5, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255, 240, 160, 0.95)';
+          ctx.fill();
+        }
+        ctx.restore();
       }
 
       // Selection ring for hovered ball
@@ -528,21 +616,6 @@ function renderBodies(ctx, W, H) {
       ctx.strokeStyle = ballType === 'fireball' ? 'rgba(255,150,0,0.6)' : ballType === 'plasma' ? 'rgba(0,220,255,0.6)' : 'rgba(255,255,255,0.3)';
       ctx.lineWidth = 1;
       ctx.stroke();
-
-      // Magnet pole indicator
-      if (ballType === 'magnetN') {
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 12px "Segoe UI", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('N', bx, by);
-      } else if (ballType === 'magnetS') {
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 12px "Segoe UI", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('S', bx, by);
-      }
 
       // Plasma: inner lightning discharge arcs
       if (ballType === 'plasma') {
@@ -678,7 +751,10 @@ function renderBodies(ctx, W, H) {
       const cx = body.position.x;
       const cy = body.position.y;
       const angle = body.angle;
-      const halfLen = 600; // generous half-length to cover any segment
+      // Derive half-length from the body's rectangle (longer edge of the 4 verts)
+      const edge1 = Math.hypot(verts[1].x - verts[0].x, verts[1].y - verts[0].y);
+      const edge2 = Math.hypot(verts[2].x - verts[1].x, verts[2].y - verts[1].y);
+      const halfLen = Math.max(edge1, edge2) / 2 + 2; // +2 for edge anti-alias safety
       const halfH = 5;     // half height in local space (LINE_THICKNESS / 2)
 
       // Draw in line-local coordinates
@@ -1035,6 +1111,38 @@ function renderBodies(ctx, W, H) {
         ctx.fillStyle = '#ff4444';
         ctx.fill();
       }
+    } else if (body._type === 'plasmaBox') {
+      const bx = body.position.x;
+      const by = body.position.y;
+      const now = Date.now();
+      const size = 48;
+      const firing = body._firingUntil && now < body._firingUntil;
+
+      // Pulsing glow
+      const pulse = Math.sin(now / 200) * 0.3 + 0.7;
+      const glowR = 36 + (firing ? 14 : 0);
+      const glow = ctx.createRadialGradient(bx, by, 8, bx, by, glowR);
+      const glowAlpha = firing ? 0.65 : 0.3 * pulse;
+      glow.addColorStop(0, `rgba(150, 200, 255, ${glowAlpha})`);
+      glow.addColorStop(0.5, `rgba(120, 80, 220, ${glowAlpha * 0.5})`);
+      glow.addColorStop(1, 'rgba(80, 0, 180, 0)');
+      ctx.beginPath();
+      ctx.arc(bx, by, glowR, 0, Math.PI * 2);
+      ctx.fillStyle = glow;
+      ctx.fill();
+
+      const img = firing ? plasmaBoxFireImg : plasmaBoxIdleImg;
+      const ready = firing ? plasmaBoxFireReady : plasmaBoxIdleReady;
+      if (ready) {
+        ctx.drawImage(img, bx - size / 2, by - size / 2, size, size);
+      } else {
+        // Fallback: simple purple box
+        ctx.fillStyle = firing ? '#c792ff' : '#7c4dff';
+        ctx.fillRect(bx - size / 2, by - size / 2, size, size);
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(bx - size / 2, by - size / 2, size, size);
+      }
     }
   }
 
@@ -1117,7 +1225,7 @@ function renderEffects(ctx, W, H) {
     ctx.stroke();
 
     // Seconds text
-    const secs = Math.ceil(timerRatio * 3);
+    const secs = Math.ceil(timerRatio * 5);
     ctx.fillStyle = `rgba(${arcR_val}, ${arcG_val}, 50, 0.9)`;
     ctx.font = 'bold 14px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
@@ -1172,8 +1280,11 @@ function renderEffects(ctx, W, H) {
       ctx.stroke();
 
       // Power indicator
-      const power = Math.min(dist * 0.15, 30);
-      const powerPct = Math.round((power / 30) * 100);
+      const basePower = Math.min(dist * 0.15, 30);
+      // Power mode 2x launch speed (requires enough score to actually fire in power mode)
+      const powerBoostActive = toolbar.powerMode && world.score >= 10;
+      const power = powerBoostActive ? basePower * 2 : basePower;
+      const powerPct = Math.round((basePower / 30) * 100);
       ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
       ctx.font = '12px "Segoe UI", sans-serif';
       ctx.textAlign = 'center';
@@ -1301,6 +1412,25 @@ function renderParticles(ctx) {
     ctx.restore();
   }
   ctx.globalAlpha = 1;
+
+  // Draw persistent fire residue fields (additive blending)
+  if (world.fireFields && world.fireFields.length > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const field of world.fireFields) {
+      const flicker = 0.85 + Math.sin(Date.now() * 0.01 + field.x) * 0.15;
+      const alpha = field.life * 0.55 * flicker;
+      const grd = ctx.createRadialGradient(field.x, field.y, 0, field.x, field.y, field.radius);
+      grd.addColorStop(0, `rgba(255,220,120,${alpha})`);
+      grd.addColorStop(0.4, `rgba(255,120,20,${alpha * 0.7})`);
+      grd.addColorStop(1, `rgba(200,40,0,0)`);
+      ctx.beginPath();
+      ctx.arc(field.x, field.y, field.radius, 0, Math.PI * 2);
+      ctx.fillStyle = grd;
+      ctx.fill();
+    }
+    ctx.restore();
+  }
 
   // Update and draw fireball fire particles (additive blending for glow)
   world.updateFireParticles();

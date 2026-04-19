@@ -8,20 +8,40 @@
 </head>
 <body>
   <div id="app">
-    <div id="toolbar">
-      <button class="tool-btn active" data-tool="ball" title="Ball Tool">&#9898; Ball</button>
-      <button class="tool-btn" data-tool="wall" title="Wall Tool">&#9999; Wall</button>
-      <button class="tool-btn" data-tool="eraser" title="Eraser Tool">&#128465; Eraser</button>
-      <button class="tool-btn" data-tool="boost" title="Boost Tool — click a ball to launch it">&#9889; Boost</button>
-      <button class="tool-btn" data-tool="launcher" title="Launcher Tool — drag to place, click to fire">&#128640; Launcher</button>
-      <button class="tool-btn" data-tool="star" title="Star Tool — place a star to collect for score">&#11088; Star</button>
-      <button class="tool-btn" data-tool="target" title="Target Tool — place a target; hit all targets to clear the stage">&#127919; Target</button>
-      <div class="separator"></div>
-      <span class="hint">Space=일시정지 | X=인벤토리 | Q=파워모드</span>
-      <div class="separator"></div>
-      <button id="test-mode-btn" title="현재 맵 테스트">&#9654; 테스트</button>
-      <button id="clear-btn" title="Clear All">&#128465; Clear</button>
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Left panel: system management -->
+    <div id="panel-left" class="float-panel">
+      <button id="menu-btn" class="icon-btn" title="메뉴 / 인벤토리 (X)">&#9776;</button>
+      <button id="open-btn" class="icon-btn" title="맵 파일 불러오기">&#128193;</button>
+      <button id="clear-btn" class="icon-btn" title="모두 지우기">&#128465;</button>
+      <input id="menu-file-input" type="file" accept="application/json" style="display:none">
     </div>
+
+    <!-- Center panel: main tools -->
+    <div id="panel-center" class="float-panel">
+      <button class="tool-btn" data-tool="select" title="선택/이동">&#128072;</button>
+      <button class="tool-btn active" data-tool="wall" title="벽 그리기">&#9999;&#65039;</button>
+      <button class="tool-btn" data-tool="ball" title="공 배치">&#9917;</button>
+      <button class="tool-btn" data-tool="eraser" title="지우개">&#129529;</button>
+      <div class="gimmick-wrap">
+        <button class="tool-btn" id="gimmick-btn" title="기믹">&#128230; <span class="caret">&#9662;</span></button>
+        <div id="gimmick-dropdown" class="dropdown hidden">
+          <button class="tool-btn gimmick-item" data-tool="launcher" data-icon="&#128640;">&#128640; Launcher</button>
+          <button class="tool-btn gimmick-item" data-tool="star" data-icon="&#11088;">&#11088; Star</button>
+          <button class="tool-btn gimmick-item" data-tool="target" data-icon="&#127987;&#65039;">&#127987;&#65039; Target</button>
+          <button class="tool-btn gimmick-item" data-tool="plasmaBox" data-icon="&#9889;">&#9889; PlasmaBox</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right panel: info + test play -->
+    <div id="panel-right" class="float-panel">
+      <button id="help-btn" class="icon-btn help" title="도움말">&#10067;</button>
+      <button id="test-mode-btn" class="test-play-btn" title="현재 맵 테스트 플레이">&#9654;&#65039; 테스트 플레이 <span class="test-small">(Test)</span></button>
+    </div>
+
+    <!-- Lobby overlay -->
     <div id="lobby-overlay">
       <div id="lobby-content">
         <h1 class="lobby-title">JustBall</h1>
@@ -32,7 +52,27 @@
         </div>
       </div>
     </div>
-    <canvas id="game-canvas"></canvas>
+
+    <!-- Help overlay -->
+    <div id="help-overlay" class="hidden">
+      <div class="help-content">
+        <div class="help-header">
+          <h2>단축키 / 조작법</h2>
+          <button id="help-close" title="닫기">&times;</button>
+        </div>
+        <table class="help-table">
+          <tr><td>마우스 드래그</td><td>공 발사 / 벽 그리기</td></tr>
+          <tr><td>Space</td><td>일시정지 / 재개</td></tr>
+          <tr><td>X</td><td>인벤토리 열기/닫기</td></tr>
+          <tr><td>Q</td><td>파워 모드 토글</td></tr>
+          <tr><td>Ctrl + 드래그</td><td>오브젝트 이동</td></tr>
+          <tr><td>Ctrl + S</td><td>빠른 저장 (샌드박스)</td></tr>
+          <tr><td>M</td><td>BGM 토글</td></tr>
+          <tr><td>Esc</td><td>로비로 / 인벤토리 닫기</td></tr>
+        </table>
+      </div>
+    </div>
+
     <div id="status">Bodies: 0</div>
   </div>
   <script type="module" src="/src/main.js"></script>

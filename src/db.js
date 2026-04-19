@@ -25,11 +25,18 @@ export async function initDB() {
     db.run(`
       CREATE TABLE IF NOT EXISTS stages (
         name TEXT PRIMARY KEY, filename TEXT, data TEXT NOT NULL,
-        source TEXT DEFAULT 'user', level INTEGER DEFAULT 0, locked INTEGER DEFAULT 0
+        source TEXT DEFAULT 'user', level INTEGER DEFAULT 0, locked INTEGER DEFAULT 0,
+        strategy TEXT
       );
       CREATE TABLE IF NOT EXISTS progress (key TEXT PRIMARY KEY, value TEXT);
       INSERT OR IGNORE INTO progress (key, value) VALUES ('maxClearedLevel', '0');
     `);
+  }
+
+  // Migration: add strategy column if missing
+  const stagesCols = _query("PRAGMA table_info(stages)").map(r => r.name);
+  if (!stagesCols.includes('strategy')) {
+    db.run('ALTER TABLE stages ADD COLUMN strategy TEXT');
   }
 
   return db;
@@ -64,7 +71,7 @@ function _query(sql, params = []) {
 
 export function getAllStages() {
   if (!db) return [];
-  return _query('SELECT name, filename, data, source, level, locked FROM stages ORDER BY level ASC, name ASC')
+  return _query('SELECT name, filename, data, source, level, locked, strategy FROM stages ORDER BY level ASC, name ASC')
     .map(row => ({
       name: row.name,
       filename: row.filename || null,
@@ -72,12 +79,13 @@ export function getAllStages() {
       source: row.source,
       level: row.level,
       locked: row.locked === 1,
+      strategy: row.strategy || '',
     }));
 }
 
 export function getStageByName(name) {
   if (!db) return null;
-  const rows = _query('SELECT name, filename, data, source, level, locked FROM stages WHERE name = ?', [name]);
+  const rows = _query('SELECT name, filename, data, source, level, locked, strategy FROM stages WHERE name = ?', [name]);
   if (rows.length === 0) return null;
   const row = rows[0];
   return {
@@ -87,10 +95,11 @@ export function getStageByName(name) {
     source: row.source,
     level: row.level,
     locked: row.locked === 1,
+    strategy: row.strategy || '',
   };
 }
 
-export function saveStage(name, data, source = 'user', filename = null) {
+export function saveStage(name, data, source = 'user', filename = null, strategy = null) {
   if (!db) return;
   // Auto-assign level: max existing level + 1 (unless data already has a level)
   let level = data.level || 0;
@@ -99,15 +108,21 @@ export function saveStage(name, data, source = 'user', filename = null) {
     level = (rows.length > 0 && rows[0].maxLv != null) ? rows[0].maxLv + 1 : 1;
   }
   const locked = data.locked ? 1 : 0;
-  const jsonData = JSON.stringify(data);
 
-  // ON CONFLICT를 사용하여 이름이 겹치면 data만 업데이트 (SQLite 3.24.0 이상 지원)
+  // ON CONFLICT를 사용하여 이름이 겹치면 data(+strategy)만 업데이트
   db.run(
-    `INSERT INTO stages (name, filename, data, source, level, locked)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(name) DO UPDATE SET data = excluded.data`,
-    [name, filename, JSON.stringify(data), source, level, locked]
+    `INSERT INTO stages (name, filename, data, source, level, locked, strategy)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET
+       data = excluded.data,
+       strategy = COALESCE(excluded.strategy, stages.strategy)`,
+    [name, filename, JSON.stringify(data), source, level, locked, strategy]
   );
+}
+
+export function saveStageStrategy(name, strategy) {
+  if (!db) return;
+  db.run('UPDATE stages SET strategy = ? WHERE name = ?', [strategy, name]);
 }
 
 export function deleteStage(name) {
