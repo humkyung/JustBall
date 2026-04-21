@@ -349,4 +349,92 @@ npm run preview
 - [x] 회전 벽의 회전 속도가 빨라짐 — 회전이 물리 스텝당 고정 증분(0.008 rad/step)이라 physics timestep을 60Hz→120Hz로 올리면서 2배 빨라짐. 초당 라디안(0.48 rad/s) 기반으로 변경하여 timestep과 무관하게 일정한 속도 유지
 - [ ] 속도가 빨라지면 공이 벽을 뚫고 지나가는 버그 — 이전에 raycast 기반 속도 clamp로 시도했으나 트램펄린/파워 모드 고속 바운스까지 감속시켜 게임플레이가 망가져 되돌렸음. 올바른 해결책은 물리 엔진의 서브스텝(sub-step) 또는 적절한 CCD 구현 필요
 
+## Godot 엔진 마이그레이션 가이드
+
+현재 HTML5 Canvas + Matter.js 기반 웹 게임을 Godot 엔진(4.x)으로 포팅하기 위한 대응 매핑.
+
+### 엔진/아키텍처 매핑
+
+| 현재 (Web) | Godot 대응 |
+|-----------|-----------|
+| HTML5 Canvas 2D API | `Node2D` 씬 트리 + 내장 2D 렌더러 |
+| Matter.js 물리 엔진 | Godot 내장 2D 물리 (Box2D 계열) |
+| Vite + ES 모듈 | Godot 프로젝트 구조 (`.tscn`, `.gd`) |
+| JavaScript 클래스 | GDScript 클래스 또는 C# |
+| `requestAnimationFrame` 루프 | `_process(delta)` / `_physics_process(delta)` |
+| Web Audio API | `AudioStreamPlayer` + `.wav`/`.ogg` |
+| HTML/CSS 툴바·인벤토리 | `Control` 노드 (Button, Panel, VBoxContainer) |
+| `localStorage` | `ConfigFile` 또는 `FileAccess` (user://) |
+
+### 파일/클래스 대응
+
+| 현재 파일 | Godot 씬/스크립트 | 설명 |
+|----------|-------------------|------|
+| `src/main.js` | `Main.tscn` + `main.gd` | 루트 씬, 게임 매니저 |
+| `src/physics.js` `PhysicsWorld` | `World.tscn` | 공·벽·아이템을 자식 노드로 관리 |
+| `src/physics.js` `BALL_TYPES` | `Ball.gd` + Resource(`.tres`) | 공 타입별 파라미터를 Resource로 정의 |
+| `src/toolbar.js` | `Toolbar.tscn` (`CanvasLayer`) | UI 툴바·인벤토리 |
+| `src/sound.js` | `SoundManager.gd` (Autoload) | 전역 사운드 싱글톤 |
+| `src/background.js` | `Background.tscn` | `TileMap` 또는 `ParallaxBackground` |
+| `src/simplify.js` | `simplify.gd` | Douglas-Peucker 알고리즘 포팅 (로직 동일) |
+
+### 물리 객체 매핑
+
+| 현재 (Matter.js) | Godot |
+|-----------------|-------|
+| `Matter.Bodies.circle(...)` (공) | `RigidBody2D` + `CollisionShape2D(CircleShape2D)` |
+| 정적 벽 (line body, `isStatic:true`) | `StaticBody2D` + `CollisionShape2D` |
+| 센서 (`isSensor:true`, 별/목표물/발사대) | `Area2D` + `CollisionShape2D` |
+| `applyForce` / `setVelocity` | `apply_force()` / `linear_velocity` |
+| `collisionStart` 이벤트 | `body_entered` / `area_entered` 시그널 |
+| 중력 `1.2 * 0.001` | `ProjectSettings` 중력 or RigidBody `gravity_scale` |
+
+### 입력 처리 매핑
+
+| 현재 | Godot |
+|------|-------|
+| `pointerdown/move/up` | `_unhandled_input(event: InputEvent)` |
+| `e.ctrlKey` | `event.ctrl_pressed` |
+| `KeyX`, `KeyQ`, `Escape` | InputMap 액션 정의 + `Input.is_action_pressed()` |
+| 캔버스 좌표 변환 | `get_global_mouse_position()` |
+
+### 렌더링 매핑
+
+| 현재 | Godot |
+|------|-------|
+| `ctx.drawImage(cannonImg, ...)` | `Sprite2D.texture = preload("Canon.svg")` |
+| `ctx.arc/fill/stroke` (커스텀 그리기) | `_draw()` 오버라이드 + `draw_circle()`/`draw_line()` |
+| 파티클 배열 (debris, explosions, ...) | `GPUParticles2D` 또는 `CPUParticles2D` |
+| 글로우/페이드 애니메이션 | `AnimationPlayer` 또는 Tween |
+| `createRadialGradient` | `Gradient` Resource + `GradientTexture2D` |
+| 회전 (발사대 포신) | `Sprite2D.rotation` 속성 |
+
+### 주요 로직 포팅 시 고려사항
+
+- **궤적 예측 (Verlet 적분)**: Matter.js와 Godot 물리는 내부 적분 방식이 다르므로, `main.js`의 `corr = 0.5` 같은 첫-스텝 보정이 Godot에서는 불필요. 대신 `_physics_process` 델타와 중력 상수로 직접 계산.
+- **선 그리기**: 각 세그먼트를 `StaticBody2D` + `SegmentShape2D`로 생성. `simplify.gd`는 그대로 포팅 가능.
+- **스테이지 JSON 포맷**: 기존 포맷 그대로 유지. `JSON.parse_string()`으로 로드 후 각 아이템을 씬 인스턴스화하여 `add_child`.
+- **카운트다운/타이머**: JS `setTimeout` → Godot `Timer` 노드 또는 `await get_tree().create_timer(3.0).timeout`.
+- **DPI 스케일링**: Godot은 `ProjectSettings > Display > Stretch`로 자동 처리 (현재 JS 코드의 DPI 로직 불필요).
+
+### 배포
+
+| 플랫폼 | Godot export |
+|--------|-------------|
+| 웹 (현재 GitHub Pages) | HTML5 export → 동일하게 GitHub Pages 가능 |
+| 데스크톱 (Win/Mac/Linux) | 각 플랫폼 바이너리로 내보내기 |
+| 모바일 (iOS/Android) | 네이티브 앱으로 내보내기 (웹 버전에서는 불가했던 부분) |
+
+### 권장 포팅 순서
+
+1. Godot 프로젝트 생성, Autoload에 `SoundManager` 설정
+2. `Ball.tscn` + `BallType.tres` (Resource) 로 공 타입 시스템 구축
+3. `World.tscn`에 `RigidBody2D` 공 1개 + 바닥 `StaticBody2D` 테스트
+4. 툴바 `Control` UI 구축, InputMap 액션 정의
+5. 벽 그리기 → 세그먼트 `StaticBody2D` 동적 생성
+6. 별/목표물/발사대 `Area2D` 센서로 구현
+7. 스테이지 JSON 로드/저장 포팅
+8. 파티클·사운드·SVG 스프라이트 교체
+9. HTML5로 export 하여 기존 배포 플로우 재사용
+
 ## 향후 계획
